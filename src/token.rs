@@ -1,5 +1,7 @@
 use std::{fmt, ops::Range};
 
+use crate::lexer;
+
 #[derive(Clone)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Token {
@@ -35,7 +37,7 @@ impl fmt::Debug for Token {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Span {
     pub len: u32,
     pub lo: usize,
@@ -73,9 +75,8 @@ impl fmt::Display for Span {
 pub enum TokenKind {
     Class,
     Else,
-    False,
-    Fi,
     If,
+    Fi,
     In,
     Inherits,
     IsVoid,
@@ -89,17 +90,24 @@ pub enum TokenKind {
     New,
     Of,
     Not,
+
     True,
+    False,
+
     Plus,
     Minus,
     Star,
     Slash,
-    Inverse,
+    /// Also known as "inverse" (in the language).
+    ///
+    /// `~`
+    Tilde,
     Less,
     LessEq,
     Eq,
     GreaterEq,
     Greater,
+    /// `<-`
     Assign,
     Colon,
     Semicolon,
@@ -110,12 +118,34 @@ pub enum TokenKind {
     LBrace,
     RBrace,
     At,
-    Identifier,
 
+    Identifier(String),
     String(String),
     Number(i64),
 
-    Whitespace,
+    Whitespace(String),
     Eof,
-    Error(String),
+    Error(lexer::Error),
 }
+
+pub static KEYWORDS: phf::Map<&'static str, TokenKind> = phf::phf_map! {
+    "class" => TokenKind::Class,
+    "else" => TokenKind::Else,
+    "if" => TokenKind::If,
+    "fi" => TokenKind::Fi,
+    "in" => TokenKind::In,
+    "inherits" => TokenKind::Inherits,
+    "isvoid" => TokenKind::IsVoid,
+    "let" => TokenKind::Let,
+    "while" => TokenKind::While,
+    "loop" => TokenKind::Loop,
+    "pool" => TokenKind::Pool,
+    "then" => TokenKind::Then,
+    "case" => TokenKind::Case,
+    "esac" => TokenKind::Esac,
+    "new" => TokenKind::New,
+    "of" => TokenKind::Of,
+    "not" => TokenKind::Not,
+    "true" => TokenKind::True,
+    "false" => TokenKind::False,
+};
