@@ -71,7 +71,6 @@ impl fmt::Display for Span {
 // This is not the most efficient way of representing a token kind, but it
 // suffices for this simple compiler implementation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[expect(dead_code)]
 pub enum TokenKind {
     Class,
     Else,

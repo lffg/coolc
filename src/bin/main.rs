@@ -3,11 +3,7 @@ use std::{
     io::{self, Write},
 };
 
-use crate::{lexer::Lexer, token::Token, util::BreakableIteratorExt};
-
-mod lexer;
-mod token;
-mod util;
+use coolc::{lexer::Lexer, token::Token, util::BreakableIteratorExt};
 
 fn main() {
     if let Err(error) = run() {
