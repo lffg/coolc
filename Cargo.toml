@@ -14,3 +14,5 @@ all = "warn"
 pedantic = "warn"
 enum_glob_use = { level = "allow", priority = 2 }
 wildcard_imports = { level = "allow", priority = 2 }
+missing_panics_doc = { level = "allow", priority = 2 }
+must_use_candidate = { level = "allow", priority = 2 }

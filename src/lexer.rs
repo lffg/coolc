@@ -50,11 +50,35 @@ impl Lexer<'_> {
         Ok(match self.mark_advance() {
             '\0' => Eof,
             '+' => Plus,
-            '-' => Minus,
+            '-' => match self.peek() {
+                '-' => self.inline_comment(),
+                _ => Minus,
+            },
             '*' => Star,
             '/' => Slash,
-            '(' => LParen,
+            '~' => Tilde,
+            '=' => Eq,
+            '<' => match self.peek() {
+                '=' => self.advance_with(LessEq),
+                '-' => self.advance_with(Assign),
+                _ => Less,
+            },
+            '>' => match self.peek() {
+                '=' => self.advance_with(GreaterEq),
+                _ => Greater,
+            },
+            ':' => Colon,
+            ';' => Semicolon,
+            ',' => Comma,
+            '.' => Dot,
+            '(' => match self.peek() {
+                '*' => self.multiline_comment(),
+                _ => LParen,
+            },
             ')' => RParen,
+            '{' => LBrace,
+            '}' => RBrace,
+            '@' => At,
             '"' => self.string(StringCtx::default())?,
             c if c.is_ascii_alphabetic() => self.identifier_or_keyword(),
             c if c.is_ascii_digit() => self.number(),
@@ -96,7 +120,6 @@ impl Lexer<'_> {
                 (false, '\\') => {
                     ctx.has_escaped = true;
                     escaped = true;
-                    continue;
                 }
                 // For any other character, just advance. Also, reset the
                 // previous escaping context, if any.
@@ -144,6 +167,24 @@ impl Lexer<'_> {
         }
         TokenKind::Whitespace(self.substr().to_string())
     }
+
+    fn inline_comment(&mut self) -> TokenKind {
+        assert_eq!(self.advance(), '-');
+        while self.peek() != '\n' {
+            self.advance();
+        }
+        TokenKind::Comment(self.substr_bounded(2, 0).to_string())
+    }
+
+    fn multiline_comment(&mut self) -> TokenKind {
+        assert_eq!(self.advance(), '*');
+        loop {
+            if self.advance() == '*' && self.advance() == ')' {
+                break;
+            }
+        }
+        TokenKind::Comment(self.substr_bounded(2, -2).to_string())
+    }
 }
 
 impl Lexer<'_> {
@@ -169,6 +210,12 @@ impl Lexer<'_> {
             .next()
             .inspect(|c| self.cursor += c.len_utf8())
             .unwrap_or('\0')
+    }
+
+    /// Advances and returns the provided value.
+    fn advance_with<T>(&mut self, value: T) -> T {
+        self.advance();
+        value
     }
 
     /// Returns the next byte (with its span) and advances the iterator.
@@ -402,6 +449,47 @@ mod tests {
                 (String("neither\nthis\none".into()), 34..52),
                 (RParen, 52..53),
                 (Eof, 53..53),
+            ],
+            "hello (* world!\n this *) 1 (**) 2 -- is a\n\"comment!\"" => [
+                (Identifier("hello".into()), 0..5),
+                (Whitespace(" ".into()), 5..6),
+                (Comment(" world!\n this ".into()), 6..24),
+                (Whitespace(" ".into()), 24..25),
+                (Number(1), 25..26),
+                (Whitespace(" ".into()), 26..27),
+                (Comment("".into()), 27..31),
+                (Whitespace(" ".into()), 31..32),
+                (Number(2), 32..33),
+                (Whitespace(" ".into()), 33..34),
+                (Comment(" is a".into()), 34..41),
+                (Whitespace("\n".into()), 41..42),
+                (String("comment!".into()), 42..52),
+                (Eof, 52..52),
+            ],
+            "(< <= <- > >= -) (<<=<->>=-)" => [
+                (LParen, 0..1),
+                (Less, 1..2),
+                (Whitespace(" ".into()), 2..3),
+                (LessEq, 3..5),
+                (Whitespace(" ".into()), 5..6),
+                (Assign, 6..8),
+                (Whitespace(" ".into()), 8..9),
+                (Greater, 9..10),
+                (Whitespace(" ".into()), 10..11),
+                (GreaterEq, 11..13),
+                (Whitespace(" ".into()), 13..14),
+                (Minus, 14..15),
+                (RParen, 15..16),
+                (Whitespace(" ".into()), 16..17),
+                (LParen, 17..18),
+                (Less, 18..19),
+                (LessEq, 19..21),
+                (Assign, 21..23),
+                (Greater, 23..24),
+                (GreaterEq, 24..26),
+                (Minus, 26..27),
+                (RParen, 27..28),
+                (Eof, 28..28),
             ],
         });
 

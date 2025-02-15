@@ -101,9 +101,9 @@ pub enum TokenKind {
     ///
     /// `~`
     Tilde,
+    Eq,
     Less,
     LessEq,
-    Eq,
     GreaterEq,
     Greater,
     /// `<-`
@@ -122,6 +122,7 @@ pub enum TokenKind {
     String(String),
     Number(i64),
 
+    Comment(String),
     Whitespace(String),
     Eof,
     Error(lexer::Error),
