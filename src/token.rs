@@ -11,7 +11,7 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new<'a>(kind: TokenKind, span: Span) -> Token {
+    pub fn new(kind: TokenKind, span: Span) -> Token {
         Token {
             kind,
             len: span.len,
@@ -46,7 +46,7 @@ pub struct Span {
 impl Span {
     pub fn new_of_bounds(Range { start: lo, end: hi }: Range<usize>) -> Span {
         debug_assert!(hi >= lo);
-        Self::new_of_length(lo, (hi - lo) as u32)
+        Self::new_of_length(lo, u32::try_from(hi - lo).unwrap())
     }
 
     pub fn new_of_length(lo: usize, len: u32) -> Span {

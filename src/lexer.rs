@@ -134,7 +134,7 @@ impl Lexer<'_> {
         }
         match self.substr().parse() {
             Ok(number) => TokenKind::Number(number),
-            Err(_) => TokenKind::Error(Error::ParseIntError),
+            Err(_) => TokenKind::Error(Error::ParseInt),
         }
     }
 
@@ -147,7 +147,7 @@ impl Lexer<'_> {
 }
 
 impl Lexer<'_> {
-    pub fn new<'src>(src: &'src str) -> Lexer<'src> {
+    pub fn new(src: &str) -> Lexer<'_> {
         Lexer {
             src,
             iter: src.chars().peekable(),
@@ -218,7 +218,6 @@ impl Lexer<'_> {
     }
 
     /// Declares a suspension.
-    #[must_use]
     fn suspend_with_error<T>(
         &mut self,
         suspended_from: Resumer,
@@ -260,7 +259,7 @@ pub enum Error {
     UnexpectedChar,
     UnclosedString,
     UnescapedLineBreak,
-    ParseIntError,
+    ParseInt,
 }
 
 impl Error {

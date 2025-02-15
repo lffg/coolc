@@ -8,3 +8,9 @@ phf = { version = "0.11.3", features = ["macros"] }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+enum_glob_use = { level = "allow", priority = 2 }
+wildcard_imports = { level = "allow", priority = 2 }
