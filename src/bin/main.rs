@@ -6,7 +6,7 @@ use std::{
 };
 
 use coolc::{
-    lexer::Lexer,
+    lexer1::Lexer,
     token::{Token, TokenKind},
     util::BreakableIteratorExt,
 };
