@@ -1,6 +1,6 @@
 use std::{fmt, ops::Range};
 
-use crate::lexer1 as lexer;
+use crate::lexer;
 
 #[derive(Clone)]
 #[cfg_attr(test, derive(PartialEq, Eq))]

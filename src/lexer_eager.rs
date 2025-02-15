@@ -1,7 +1,7 @@
 use std::{iter::Peekable, ops::Range};
 
 use crate::{
-    lexer1 as l,
+    lexer as l,
     token::{Span, Token, TokenKind, KEYWORDS},
 };
 
@@ -10,30 +10,55 @@ pub struct Lexer<'src> {
     iter: Peekable<std::str::Chars<'src>>,
     cursor: usize,
     current_lo: usize,
-    tokens: Vec<Token>,
+    tokens: &'src mut Vec<Token>,
 }
 
-pub fn lex(src: &str) -> Vec<Token> {
-    let mut lexer = Lexer::new(src);
+pub fn lex(tokens: &mut Vec<Token>, src: &str) {
+    assert!(tokens.is_empty());
+    let mut lexer = Lexer::new(tokens, src);
     while lexer.cursor < src.len() {
         let next = lexer.scan_token_kind();
         lexer.tokens.push(lexer.produce(next));
     }
-    lexer.tokens
 }
 
 impl Lexer<'_> {
     /// Tries to scan the current character.
     fn scan_token_kind(&mut self) -> TokenKind {
         use TokenKind::*;
+
         match self.mark_advance() {
             '\0' => Eof,
             '+' => Plus,
-            '-' => Minus,
+            '-' => match self.peek() {
+                '-' => self.inline_comment(),
+                _ => Minus,
+            },
             '*' => Star,
             '/' => Slash,
-            '(' => LParen,
+            '~' => Tilde,
+            '=' => Eq,
+            '<' => match self.peek() {
+                '=' => self.advance_with(LessEq),
+                '-' => self.advance_with(Assign),
+                _ => Less,
+            },
+            '>' => match self.peek() {
+                '=' => self.advance_with(GreaterEq),
+                _ => Greater,
+            },
+            ':' => Colon,
+            ';' => Semicolon,
+            ',' => Comma,
+            '.' => Dot,
+            '(' => match self.peek() {
+                '*' => self.multiline_comment(),
+                _ => LParen,
+            },
             ')' => RParen,
+            '{' => LBrace,
+            '}' => RBrace,
+            '@' => At,
             '"' => self.string(),
             c if c.is_ascii_alphabetic() => self.identifier_or_keyword(),
             c if c.is_ascii_digit() => self.number(),
@@ -49,7 +74,9 @@ impl Lexer<'_> {
             let (current, current_span) = self.advance_with_span();
             match (escaped, current) {
                 // A NUL char marks the unclosed string error, in any context.
-                (_, '\0') => return TokenKind::Error(l::Error::UnclosedString),
+                (_, '\0') => {
+                    return TokenKind::Error(l::Error::UnclosedString);
+                }
                 // An unescaped quotation mark marks the end of the string.
                 (false, '"') => {
                     let raw = self.substr_bounded(1, -1);
@@ -120,16 +147,34 @@ impl Lexer<'_> {
         }
         TokenKind::Whitespace(self.substr().to_string())
     }
+
+    fn inline_comment(&mut self) -> TokenKind {
+        assert_eq!(self.advance(), '-');
+        while self.peek() != '\n' {
+            self.advance();
+        }
+        TokenKind::Comment(self.substr_bounded(2, 0).to_string())
+    }
+
+    fn multiline_comment(&mut self) -> TokenKind {
+        assert_eq!(self.advance(), '*');
+        loop {
+            if self.advance() == '*' && self.advance() == ')' {
+                break;
+            }
+        }
+        TokenKind::Comment(self.substr_bounded(2, -2).to_string())
+    }
 }
 
 impl Lexer<'_> {
-    pub fn new(src: &str) -> Lexer<'_> {
+    pub fn new<'a>(tokens: &'a mut Vec<Token>, src: &'a str) -> Lexer<'a> {
         Lexer {
             src,
             iter: src.chars().peekable(),
             cursor: 0,
             current_lo: 0,
-            tokens: Vec::with_capacity(8_192),
+            tokens,
         }
     }
 
@@ -145,6 +190,12 @@ impl Lexer<'_> {
             .next()
             .inspect(|c| self.cursor += c.len_utf8())
             .unwrap_or('\0')
+    }
+
+    /// Advances and returns the provided value.
+    fn advance_with<T>(&mut self, value: T) -> T {
+        self.advance();
+        value
     }
 
     /// Returns the next byte (with its span) and advances the iterator.

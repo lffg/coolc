@@ -1,5 +1,5 @@
 use coolc::{
-    lexer1, lexer2,
+    lexer, lexer_eager,
     token::{Token, TokenKind},
     util::BreakableIteratorExt,
 };
@@ -8,8 +8,9 @@ use std::hint::black_box;
 
 static INPUT: &str = include_str!("../examples/big.cool");
 
-fn lexer_eager(input: &str) {
-    let tokens = lexer2::lex(input);
+fn lexer_eager(tokens: &mut Vec<Token>, input: &str) {
+    tokens.clear();
+    lexer_eager::lex(tokens, input);
     let mut i = 0;
     for token in tokens {
         if matches!(token.kind, TokenKind::Error(_)) {
@@ -22,7 +23,7 @@ fn lexer_eager(input: &str) {
 
 fn lexer_incremental(input: &str) {
     let mut i = 0;
-    for token in lexer1::Lexer::new(input).up_to(Token::is_eof) {
+    for token in lexer::Lexer::new(input).up_to(Token::is_eof) {
         if matches!(token.kind, TokenKind::Error(_)) {
             continue;
         }
@@ -35,7 +36,11 @@ fn lexer_incremental(input: &str) {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("eager", |b| b.iter(|| lexer_eager(black_box(INPUT))));
+    let mut tokens = Vec::with_capacity(8_192);
+
+    c.bench_function("eager", |b| {
+        b.iter(|| lexer_eager(&mut tokens, black_box(INPUT)))
+    });
     c.bench_function("incremental", |b| {
         b.iter(|| lexer_incremental(black_box(INPUT)))
     });

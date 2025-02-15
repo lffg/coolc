@@ -1,4 +1,4 @@
-pub mod lexer1;
-pub mod lexer2;
+pub mod lexer;
+pub mod lexer_eager;
 pub mod token;
 pub mod util;
