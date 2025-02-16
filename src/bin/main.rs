@@ -5,7 +5,7 @@ use std::{
     io::{self, Write},
 };
 
-use coolc::{
+use cool::{
     lexer::Lexer,
     token::{Token, TokenKind},
     util::BreakableIteratorExt,

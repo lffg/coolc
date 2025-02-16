@@ -1,0 +1,17 @@
+[package]
+name = "cool-bench"
+version.workspace = true
+edition.workspace = true
+
+[[bench]]
+name = "lexer"
+harness = false
+
+[dependencies]
+cool.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[lints]
+workspace = true
