@@ -6,9 +6,8 @@ use std::{
 };
 
 use cool::{
-    lexer::Lexer,
-    token::{Token, TokenKind},
-    util::BreakableIteratorExt,
+    lexer::{lex, SUGGESTED_TOKENS_CAPACITY},
+    token::TokenKind,
 };
 
 fn main() {
@@ -43,13 +42,17 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn pipeline(input: &str) {
-    let mut error = false;
-    let lexed: Vec<_> = Lexer::new(input)
-        .up_to(Token::is_eof)
-        .inspect(|t| {
-            error |= matches!(t.kind, TokenKind::Error(_));
-        })
-        .collect();
-    println!("{lexed:?}");
-    println!("error?= {error}");
+    let mut has_errors = false;
+    let mut tokens = Vec::with_capacity(SUGGESTED_TOKENS_CAPACITY);
+
+    lex(input, &mut tokens);
+
+    println!("{tokens:?}");
+    for token in tokens {
+        if let TokenKind::Error(error) = token.kind {
+            println!("error: {error:?} at {}", token.span());
+            has_errors = true;
+        }
+    }
+    println!("error?= {has_errors}");
 }

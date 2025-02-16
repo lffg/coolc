@@ -1,53 +1,51 @@
-use std::{iter::Peekable, mem, ops::Range};
+use std::{iter::Peekable, ops::Range};
 
 use crate::token::{Span, Token, TokenKind, KEYWORDS};
 
-type Result<T, E = MidwayError> = std::result::Result<T, E>;
+pub const SUGGESTED_TOKENS_CAPACITY: usize = 8_192;
 
-/// The Cool lexer.
-///
-/// ## Implementation Remarks
-///
-/// This type implements the [`Iterator`] trait to make the parser walk through
-/// the tokens without allocating a collection to hold all of them at once.
-///
-/// Since tokens of type [`TokenKind::Eof`] already serve as an indication of
-/// termination (with the addition of having span information), the [`Iterator`]
-/// implementation is infinite: instead of returning None when the source stream
-/// is exhausted, tokens of type [`TokenKind::Eof`] will be continuously
-/// returned.
-///
-/// Consumers must follow this convention, or use the [`up_to`] helper.
-///
-/// [`up_to`]: crate::util::BreakableIteratorExt::up_to
-pub struct Lexer<'src> {
+/// Lexes the provided string, producing the tokens into the provided buffer.
+pub fn lex(input: &str, tokens: &mut Vec<Token>) {
+    Lexer::new(input, tokens).lex();
+}
+
+/// A convenience function that allocates a new buffer per lexed input and
+/// returns it.
+pub fn lex_in_new(input: &str) -> Vec<Token> {
+    let mut tokens = Vec::with_capacity(SUGGESTED_TOKENS_CAPACITY);
+    lex(input, &mut tokens);
+    tokens
+}
+
+/// The Cool lexer
+struct Lexer<'src, 'tok> {
     src: &'src str,
     iter: Peekable<std::str::Chars<'src>>,
     cursor: usize,
     current_lo: usize,
-    resumer: Resumer,
+    tokens: &'tok mut Vec<Token>,
 }
 
-impl Iterator for Lexer<'_> {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(match self.scan_token_kind() {
-            Ok(kind) => self.produce(kind),
-            Err(MidwayError { error, span }) => Token::new(TokenKind::Error(error), span),
-        })
+impl Lexer<'_, '_> {
+    /// Scans the source string until the input is exhausted.
+    ///
+    /// Tokens are written into the provided tokens buffer.
+    fn lex(mut self) {
+        assert_eq!(self.tokens.len(), 0, "must pass clean tokens buffer");
+        loop {
+            let next = self.scan_token_kind();
+            let is_eof = matches!(next, TokenKind::Eof);
+            self.produce(next);
+            if is_eof {
+                break;
+            }
+        }
     }
-}
 
-impl Lexer<'_> {
     /// Tries to scan the current character.
-    fn scan_token_kind(&mut self) -> Result<TokenKind> {
+    fn scan_token_kind(&mut self) -> TokenKind {
         use TokenKind::*;
-        let _: () = match mem::take(&mut self.resumer) {
-            Resumer::None => (),
-            Resumer::String(ctx) => return self.string(ctx),
-        };
-        Ok(match self.mark_advance() {
+        match self.mark_advance() {
             '\0' => Eof,
             '+' => Plus,
             '-' => match self.peek() {
@@ -79,46 +77,45 @@ impl Lexer<'_> {
             '{' => LBrace,
             '}' => RBrace,
             '@' => At,
-            '"' => self.string(StringCtx::default())?,
+            '"' => self.string(),
             c if c.is_ascii_alphabetic() => self.identifier_or_keyword(),
             c if c.is_ascii_digit() => self.number(),
             c if c.is_ascii_whitespace() => self.whitespace(),
-            _ => return self::Error::UnexpectedChar.with_span(self.span()),
-        })
+            _ => TokenKind::Error(self::Error::UnexpectedChar),
+        }
     }
 
-    fn string(&mut self, mut ctx: StringCtx) -> Result<TokenKind> {
+    fn string(&mut self) -> TokenKind {
+        let mut has_escaped = true;
         let mut escaped = false;
         loop {
             let (current, current_span) = self.advance_with_span();
             match (escaped, current) {
                 // A NUL char marks the unclosed string error, in any context.
+                // Since there's not else to be done (the input has exhausted),
+                // the scanner exists here with a single error token.
                 (_, '\0') => {
-                    return Error::UnclosedString.with_span(self.span());
+                    return TokenKind::Error(Error::UnclosedString);
                 }
                 // An unescaped quotation mark marks the end of the string.
                 (false, '"') => {
                     let raw = self.substr_bounded(1, -1);
-                    let string = if ctx.has_escaped {
+                    let string = if has_escaped {
                         perform_escape(raw)
                     } else {
                         raw.to_string()
                     };
-                    return Ok(TokenKind::String(string));
+                    return TokenKind::String(string);
                 }
                 // A string can only contain a line break if it is escaped. In
-                // this case, an error token is emitted with a resume point to
-                // continue lexing the current string.
+                // this case, an error token is emitted. Notice that the lexer
+                // keeps scanning the string.
                 (false, '\n') => {
-                    return self.suspend_with_error(
-                        Resumer::String(ctx),
-                        Error::UnescapedLineBreak,
-                        current_span,
-                    );
+                    self.produce_spanned(TokenKind::Error(Error::UnescapedLineBreak), current_span);
                 }
                 // Mark a new escape context.
                 (false, '\\') => {
-                    ctx.has_escaped = true;
+                    has_escaped = true;
                     escaped = true;
                 }
                 // For any other character, just advance. Also, reset the
@@ -187,14 +184,15 @@ impl Lexer<'_> {
     }
 }
 
-impl Lexer<'_> {
-    pub fn new(src: &str) -> Lexer<'_> {
+impl Lexer<'_, '_> {
+    /// Constructs a new lexer with the default state.
+    fn new<'src, 'tok>(src: &'src str, tokens: &'tok mut Vec<Token>) -> Lexer<'src, 'tok> {
         Lexer {
             src,
             iter: src.chars().peekable(),
             cursor: 0,
             current_lo: 0,
-            resumer: Resumer::default(),
+            tokens,
         }
     }
 
@@ -260,19 +258,13 @@ impl Lexer<'_> {
     }
 
     /// Produces a token using the marked bounds.
-    fn produce(&self, kind: TokenKind) -> Token {
-        Token::new(kind, self.span())
+    fn produce(&mut self, kind: TokenKind) {
+        self.produce_spanned(kind, self.span());
     }
 
-    /// Declares a suspension.
-    fn suspend_with_error<T>(
-        &mut self,
-        suspended_from: Resumer,
-        error: Error,
-        span: Span,
-    ) -> Result<T, MidwayError> {
-        self.resumer = suspended_from;
-        Err(MidwayError { error, span })
+    /// Produces a token with the provided span.
+    fn produce_spanned(&mut self, kind: TokenKind, span: Span) {
+        self.tokens.push(Token::new(kind, span));
     }
 }
 
@@ -309,33 +301,8 @@ pub enum Error {
     ParseInt,
 }
 
-impl Error {
-    fn with_span<T>(self, span: Span) -> Result<T, MidwayError> {
-        Err(MidwayError { error: self, span })
-    }
-}
-
-struct MidwayError {
-    error: Error,
-    span: Span,
-}
-
-#[derive(Default)]
-enum Resumer {
-    #[default]
-    None,
-    String(StringCtx),
-}
-
-#[derive(Default)]
-struct StringCtx {
-    has_escaped: bool,
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::util::BreakableIteratorExt;
-
     use super::*;
     use pretty_assertions::assert_eq;
 
@@ -494,9 +461,7 @@ mod tests {
         });
 
         for (input, tokens) in cases {
-            let lexed: Vec<_> = Lexer::new(input)
-                .up_to(|t| t.kind == TokenKind::Eof)
-                .collect();
+            let lexed = lex_in_new(input);
             assert_eq!(lexed, tokens.as_slice());
         }
     }
