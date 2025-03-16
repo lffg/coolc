@@ -178,7 +178,7 @@ impl Lexer<'_, '_> {
 
     fn inline_comment(&mut self) -> TokenKind {
         assert_eq!(self.advance(), '-');
-        while self.peek() != '\n' {
+        while !matches!(self.peek(), '\n' | '\0') {
             self.advance();
         }
         TokenKind::Comment(self.substr_bounded(2, 0).to_string())
@@ -460,6 +460,10 @@ mod tests {
                 (Whitespace("\n".into()), 41..42),
                 (String("comment!".into()), 42..52),
                 (Eof, 52..52),
+            ],
+            "-- line comment without line break" => [
+                (Comment(" line comment without line break".into()), 0..34),
+                (Eof, 34..34),
             ],
             "(* unclosed" => [
                 //
