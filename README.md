@@ -186,6 +186,12 @@ lexical structures, when developing the parser, carefully-constructed excerpts
 of code were written to intentionally test the lexer against cases that may
 reveal mis-implementations.
 
+Most of the lexer-related tests can be found at end of the `src/lexer.rs` file.
+A `cases!` [declarative macro] was introduced to streamline the definition of
+each test case.
+
+[declarative macro]: https://doc.rust-lang.org/reference/macros-by-example.html
+
 We also used the artifact of the first assignment (stack machine) to test
 whether it successfully passes the scanning phase without errors—which it does.
 
