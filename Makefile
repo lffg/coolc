@@ -18,7 +18,7 @@ ifeq ($(NAME),)
 endif
 	@echo "archiving as directory $(SUBMISSION_PREFIX)$(NAME)"
 	mkdir -p $(SUBMISSION_DIR)
-	tar -c -v -z -f $(SUBMISSION_DIR)/$(NAME).tar.gz \
+	tar -c -z -f $(SUBMISSION_DIR)/$(NAME).tar.gz \
 		--transform 's,^,$(SUBMISSION_PREFIX)$(NAME)/,' \
 		--exclude=target \
 		--exclude=$(SUBMISSION_DIR) \
