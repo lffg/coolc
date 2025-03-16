@@ -187,8 +187,15 @@ impl Lexer<'_, '_> {
     fn multiline_comment(&mut self) -> TokenKind {
         assert_eq!(self.advance(), '*');
         loop {
-            if self.advance() == '*' && self.advance() == ')' {
-                break;
+            match self.advance() {
+                '*' => (), // start closing comment
+                '\0' => return TokenKind::Error(Error::UnclosedComment),
+                _ => continue, // keep scanning comment...
+            }
+            match self.advance() {
+                ')' => break, // finished closing comment
+                '\0' => return TokenKind::Error(Error::UnclosedComment),
+                _ => continue, // sadly couldn't close it! keep scanning...
             }
         }
         TokenKind::Comment(self.substr_bounded(2, -2).to_string())
@@ -307,6 +314,7 @@ fn perform_escape(raw: &str) -> String {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     UnexpectedChar,
+    UnclosedComment,
     UnclosedString,
     UnescapedLineBreak,
     ParseInt,
@@ -452,6 +460,11 @@ mod tests {
                 (Whitespace("\n".into()), 41..42),
                 (String("comment!".into()), 42..52),
                 (Eof, 52..52),
+            ],
+            "(* unclosed" => [
+                //
+                (Error(E::UnclosedComment), 0..11),
+                (Eof, 11..11),
             ],
             "(< <= <- > >= -) (<<=<->>=-)" => [
                 (LParen, 0..1),
