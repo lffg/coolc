@@ -318,6 +318,15 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
+    fn test_stack_machine_no_errors() {
+        let input = include_str!("../examples/stack-machine.cool");
+        let has_errors = lex_in_new(input)
+            .into_iter()
+            .any(|t| matches!(t.kind, TokenKind::Error(_)));
+        assert!(!has_errors);
+    }
+
+    #[test]
     fn tests_with_span() {
         use super::Error as E;
         use TokenKind::*;
