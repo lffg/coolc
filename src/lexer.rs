@@ -85,12 +85,23 @@ impl Lexer<'_, '_> {
         }
     }
 
+    /// Tries to lex a string token. This is the most complicated token lexing
+    /// routine since it has to detect character escape sequences, if any.
+    ///
+    /// Notice that the lexer doesn't escape the string while trying to lex the
+    /// token itself. Instead, it only performs the escape *after* the entire
+    /// token has been lexed (just before returning). This is an optimization to
+    /// avoid the need of a growing buffer for all string tokens (which is
+    /// necessary when performing escaping): we only pay the cost of escape when
+    /// it's actually necessary.
     fn string(&mut self) -> TokenKind {
-        let mut has_escaped = true;
-        let mut escaped = false;
+        // Whether any escaping did happen inside this string token
+        let mut has_escaped = false;
+        // Whether the current character is being escaped
+        let mut is_escaping = false;
         loop {
             let (current, current_span) = self.advance_with_span();
-            match (escaped, current) {
+            match (is_escaping, current) {
                 // A NUL char marks the unclosed string error, in any context.
                 // Since there's not else to be done (the input has exhausted),
                 // the scanner exists here with a single error token.
@@ -116,12 +127,12 @@ impl Lexer<'_, '_> {
                 // Mark a new escape context.
                 (false, '\\') => {
                     has_escaped = true;
-                    escaped = true;
+                    is_escaping = true;
                 }
                 // For any other character, just advance. Also, reset the
                 // previous escaping context, if any.
                 (_, _) => {
-                    escaped = false;
+                    is_escaping = false;
                 }
             }
         }
