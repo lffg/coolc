@@ -1,6 +1,6 @@
 CARGO := cargo
 
-SUBMISSION_PREFIX ?= submission-
+SUBMISSION_PREFIX ?= lffg-
 SUBMISSION_DIR := submission
 
 .PHONY: bench
