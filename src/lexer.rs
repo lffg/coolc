@@ -1,4 +1,4 @@
-use std::{iter::Peekable, ops::Range};
+use std::{collections::LinkedList, iter::Peekable, ops::Range};
 
 use crate::token::{Span, Token, TokenKind, KEYWORDS};
 
@@ -21,8 +21,8 @@ pub fn lex_in_new(input: &str) -> Vec<Token> {
 struct Lexer<'src, 'tok> {
     src: &'src str,
     iter: Peekable<std::str::Chars<'src>>,
-    cursor: usize,
-    current_lo: usize,
+    cursor: u32,
+    current_lo: u32,
     tokens: &'tok mut Vec<Token>,
 }
 
@@ -81,7 +81,7 @@ impl Lexer<'_, '_> {
             c if c.is_ascii_alphabetic() => self.identifier_or_keyword(),
             c if c.is_ascii_digit() => self.number(),
             c if c.is_ascii_whitespace() => self.whitespace(),
-            _ => TokenKind::Error(self::Error::UnexpectedChar),
+            _ => UnexpectedCharError,
         }
     }
 
@@ -95,7 +95,7 @@ impl Lexer<'_, '_> {
                 // Since there's not else to be done (the input has exhausted),
                 // the scanner exists here with a single error token.
                 (_, '\0') => {
-                    return TokenKind::Error(Error::UnclosedString);
+                    return Error::UnclosedString;
                 }
                 // An unescaped quotation mark marks the end of the string.
                 (false, '"') => {
@@ -105,7 +105,7 @@ impl Lexer<'_, '_> {
                     } else {
                         raw.to_string()
                     };
-                    return TokenKind::String(string);
+                    return TokenKind::String;
                 }
                 // A string can only contain a line break if it is escaped. In
                 // this case, an error token is emitted. Notice that the lexer
@@ -230,14 +230,13 @@ impl Lexer<'_, '_> {
         self.iter.peek().copied().unwrap_or('\0')
     }
 
-    /// Returns the current range.
-    fn range(&self) -> Range<usize> {
-        self.current_lo..self.cursor
-    }
-
-    /// Returns the current span.
-    fn span(&self) -> Span {
-        Span::new_of_bounds(self.range())
+    /// Returns the span of the token being lexed.
+    fn span(&self) -> Result<Span, TokenKind> {
+        let lo = self.current_lo;
+        match u16::try_from(self.cursor - lo) {
+            Ok(len) => Ok(Span::new_of_length(lo, len)),
+            Err(_) => Err(TokenKind::TokenTooBigError),
+        }
     }
 
     /// Returns the substring of the current marked bounds.
@@ -293,14 +292,6 @@ fn perform_escape(raw: &str) -> String {
     buf
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Error {
-    UnexpectedChar,
-    UnclosedString,
-    UnescapedLineBreak,
-    ParseInt,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,7 +299,6 @@ mod tests {
 
     #[test]
     fn tests_with_span() {
-        use super::Error as E;
         use TokenKind::*;
         let cases = cases!(match .. {
             "+-*/" => [

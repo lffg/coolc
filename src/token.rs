@@ -1,13 +1,11 @@
-use std::{fmt, ops::Range};
-
-use crate::lexer;
+use std::fmt;
 
 #[derive(Clone)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Token {
     pub kind: TokenKind,
-    lo: usize,
-    len: u32,
+    lo: u32,
+    len: u16,
 }
 
 impl Token {
@@ -39,17 +37,18 @@ impl fmt::Debug for Token {
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Span {
-    pub len: u32,
-    pub lo: usize,
+    lo: u32,
+    len: u16,
 }
 
 impl Span {
-    pub fn new_of_bounds(Range { start: lo, end: hi }: Range<usize>) -> Span {
-        debug_assert!(hi >= lo);
-        Self::new_of_length(lo, u32::try_from(hi - lo).unwrap())
+    pub fn range(self) -> std::ops::Range<usize> {
+        let lo = self.lo as usize;
+        let hi = lo + self.len as usize;
+        lo..hi
     }
 
-    pub fn new_of_length(lo: usize, len: u32) -> Span {
+    pub fn new_of_length(lo: u32, len: u16) -> Span {
         Span { len, lo }
     }
 }
@@ -63,7 +62,7 @@ impl fmt::Debug for Span {
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let lo = self.lo;
-        let hi = lo + self.len as usize;
+        let hi = lo + u32::from(self.len);
         write!(f, "{lo}..{hi}")
     }
 }
@@ -118,14 +117,21 @@ pub enum TokenKind {
     RBrace,
     At,
 
-    Identifier(String),
-    String(String),
-    Number(i64),
+    Identifier,
+    StringWithEscape,
+    StringWithoutScape,
+    Number,
 
-    Comment(String),
-    Whitespace(String),
+    Comment,
+    Whitespace,
     Eof,
-    Error(lexer::Error),
+
+    UnexpectedCharError,
+    UnclosedStringError,
+    UnescapedLineBreakError,
+    ParseIntError,
+    SourceFileTooBigError,
+    TokenTooBigError,
 }
 
 pub static KEYWORDS: phf::Map<&'static str, TokenKind> = phf::phf_map! {

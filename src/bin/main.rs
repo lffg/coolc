@@ -47,11 +47,12 @@ fn pipeline(input: &str) {
 
     lex(input, &mut tokens);
 
-    println!("{tokens:?}");
     for token in tokens {
         if let TokenKind::Error(error) = token.kind {
             println!("error: {error:?} at {}", token.span());
             has_errors = true;
+        } else {
+            println!("{:?} @ {}", token.kind, token.span());
         }
     }
     println!("error?= {has_errors}");
