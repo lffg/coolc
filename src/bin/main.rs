@@ -42,17 +42,16 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn pipeline(input: &str) {
-    let mut has_errors = false;
+    let mut errored = false;
     let mut tokens = Vec::with_capacity(SUGGESTED_TOKENS_CAPACITY);
 
     lex(input, &mut tokens);
 
-    println!("{tokens:?}");
     for token in tokens {
-        if let TokenKind::Error(error) = token.kind {
-            println!("error: {error:?} at {}", token.span());
-            has_errors = true;
+        println!("{:?} @ {}", token.kind, token.span());
+        if let TokenKind::Error(_) = token.kind {
+            errored = true;
         }
     }
-    println!("error?= {has_errors}");
+    println!("\nerror?= {errored}");
 }
