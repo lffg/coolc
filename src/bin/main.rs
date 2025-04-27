@@ -7,8 +7,8 @@ use std::{
 
 // Make sure these imports are correct based on your lib.rs structure
 use cool::{
-    parser::{self, Parser},
-    token::Spanned,
+    parser,
+    token::{Spanned, Token},
     util::fmt::print_program,
 };
 
@@ -21,11 +21,12 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
+    let mut tokens_buf = Vec::with_capacity(8 * 1024);
 
     // File mode
     if let Some(prog_path) = args.next() {
         let input = fs::read_to_string(prog_path)?;
-        pipeline(&input);
+        pipeline(&input, &mut tokens_buf);
         return Ok(());
     }
 
@@ -51,7 +52,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             if accumulated_input.trim().is_empty() {
                 println!("^D");
             } else {
-                pipeline(&accumulated_input);
+                pipeline(&accumulated_input, &mut tokens_buf);
             }
             return Ok(());
         }
@@ -59,7 +60,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         // Empty line is another termination signal
         if current_line.trim().is_empty() {
             if !accumulated_input.trim().is_empty() {
-                pipeline(&accumulated_input);
+                pipeline(&accumulated_input, &mut tokens_buf);
                 accumulated_input.clear(); // Clear for next input
             }
         } else {
@@ -68,22 +69,28 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn pipeline(input: &str) {
-    let mut buf = Vec::with_capacity(8 * 1024);
-    let parser = Parser::new(input, &mut buf);
+fn pipeline(src: &str, tokens: &mut Vec<Token>) {
+    tokens.clear();
 
-    match parser.parse() {
+    match parser::parse_program(src, tokens) {
         Ok(prog) => {
             print_program(&mut io::stdout(), &prog).unwrap();
         }
-        Err(error) => {
-            report_error(input, &error);
+        Err((prog, errors)) => {
+            eprintln!("Got {} errors", errors.len());
+            eprintln!();
+            eprintln!("Partial AST:");
+            print_program(&mut io::stdout(), &prog).unwrap();
+            eprintln!();
+            for error in errors {
+                report_error(src, &error);
+            }
         }
     }
 }
 
 // Helper function to report errors with context
-fn report_error(source: &str, error: &Spanned<parser::Error>) {
+fn report_error(src: &str, error: &Spanned<parser::Error>) {
     let span = error.span;
     let error = error.inner;
 
@@ -93,7 +100,7 @@ fn report_error(source: &str, error: &Spanned<parser::Error>) {
     let mut column = 0;
 
     // Calculate the start position (line and column)
-    for (i, char) in source.char_indices() {
+    for (i, char) in src.char_indices() {
         if i >= span.lo as usize {
             column = i - line_start + 1;
             break;
@@ -104,15 +111,15 @@ fn report_error(source: &str, error: &Spanned<parser::Error>) {
         }
     }
     // If span.lo is beyond the source length (e.g., EOF span at end)
-    if span.lo as usize >= source.len() && !source.is_empty() {
-        column = source.len() - line_start + 1;
-    } else if source.is_empty() {
+    if span.lo as usize >= src.len() && !src.is_empty() {
+        column = src.len() - line_start + 1;
+    } else if src.is_empty() {
         column = 1;
     }
 
     eprintln!("Error (line {line}, col {column}): {error:?}");
 
-    if let Some(line_content) = source.lines().nth(line - 1) {
+    if let Some(line_content) = src.lines().nth(line - 1) {
         eprintln!("{line:>4} | {line_content}");
         // Add an indicator '^' under the approximate error location
         let indicator_padding = column.saturating_sub(1);

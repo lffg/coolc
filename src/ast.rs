@@ -50,6 +50,14 @@ pub struct Program {
     pub classes: Vec<Class>,
 }
 
+impl Program {
+    pub fn dummy() -> Program {
+        Program {
+            classes: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Class {
     pub name: Type,
@@ -86,6 +94,15 @@ pub struct Formal {
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
+}
+
+impl Expr {
+    pub fn dummy(span: Span) -> Expr {
+        Expr {
+            kind: ExprKind::Dummy,
+            span,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -136,6 +153,7 @@ pub enum ExprKind {
     Int(i64),
     String(Box<str>),
     Bool(bool),
+    Dummy,
 }
 
 #[derive(Debug, PartialEq)]

@@ -74,7 +74,7 @@ fn print_binding(w: &mut impl Write, i: usize, binding: &Binding) -> std::io::Re
     Ok(())
 }
 
-fn print_expr(w: &mut impl Write, i: usize, expr: &Expr) -> std::io::Result<()> {
+pub fn print_expr(w: &mut impl Write, i: usize, expr: &Expr) -> std::io::Result<()> {
     sp(w, i)?;
     let span = expr.span;
     match &expr.kind {
@@ -159,6 +159,9 @@ fn print_expr(w: &mut impl Write, i: usize, expr: &Expr) -> std::io::Result<()> 
         }
         ExprKind::Bool(val) => {
             writeln!(w, "bool {val} ({span})")?;
+        }
+        ExprKind::Dummy => {
+            writeln!(w, "dummy ({span})")?;
         }
     }
     Ok(())

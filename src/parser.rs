@@ -7,23 +7,51 @@ use crate::{
     token::{Span, Spanned, Token, TokenKind},
 };
 
-type Result<T, E = Spanned<Error>> = std::result::Result<T, E>;
+type Result<T, E = ()> = std::result::Result<T, E>;
 
-pub struct Parser<'src, 'tok> {
+pub type ParseResult<T> = Result<T, (T, Vec<Spanned<Error>>)>;
+
+pub fn parse_program(src: &str, tokens: &mut Vec<Token>) -> ParseResult<Program> {
+    parse(src, tokens, Parser::parse_program, Program::dummy)
+}
+
+pub fn parse_expr(src: &str, tokens: &mut Vec<Token>) -> ParseResult<Expr> {
+    let default = || Expr::dummy(Span::new_of_length(u32::try_from(src.len()).unwrap(), 0));
+    parse(src, tokens, Parser::parse_expr, default)
+}
+
+fn parse<'src, 'tok, T>(
+    src: &'src str,
+    tokens: &'tok mut Vec<Token>,
+    f: impl for<'a> FnOnce(&'a mut Parser<'src, 'tok>) -> Result<T>,
+    default: impl FnOnce() -> T,
+) -> ParseResult<T> {
+    assert!(tokens.is_empty());
+
+    // Lex and parse
+    lexer::lex(src, tokens);
+    let mut p = Parser::new(src, tokens);
+    let parse_result = f(&mut p);
+
+    // Error handling
+    let success = parse_result.is_ok();
+    let el = parse_result.unwrap_or_else(|()| default());
+    if p.errors.is_empty() {
+        assert!(success);
+        Ok(el)
+    } else {
+        Err((el, p.errors))
+    }
+}
+
+struct Parser<'src, 'tok> {
     src: &'src str,
     tokens: &'tok mut Vec<Token>,
     cursor: usize,
+    errors: Vec<Spanned<Error>>,
 }
 
 impl Parser<'_, '_> {
-    pub fn parse(mut self) -> Result<Program> {
-        assert!(self.tokens.is_empty());
-        assert_eq!(self.cursor, 0);
-
-        lexer::lex(self.src, self.tokens);
-        self.parse_program()
-    }
-
     fn parse_program(&mut self) -> Result<Program> {
         let mut classes = Vec::with_capacity(4);
         while self.except([]) {
@@ -32,7 +60,8 @@ impl Parser<'_, '_> {
         self.consume(TokenKind::Eof)?;
         if classes.is_empty() {
             let s = Span::new_of_length(0, u32::try_from(self.src.len()).unwrap());
-            Err(s.wrap(Error::EmptyProgram))
+            self.error(s.wrap(Error::EmptyProgram));
+            Err(())
         } else {
             Ok(Program { classes })
         }
@@ -167,13 +196,13 @@ impl Parser<'_, '_> {
                 }),
                 token.span(),
             ),
-            TokenKind::Number => (
-                match extract::int(token, self.src) {
-                    Ok(parsed) => ExprKind::Int(parsed),
-                    Err(_) => return Err(token.span().wrap(Error::ParseInt)),
-                },
-                token.span(),
-            ),
+            TokenKind::Number => {
+                let Ok(parsed) = extract::int(token, self.src) else {
+                    self.error(token.span().wrap(Error::ParseInt));
+                    return Err(());
+                };
+                (ExprKind::Int(parsed), token.span())
+            }
             TokenKind::String => (
                 ExprKind::String(extract::string(token, self.src)),
                 token.span(),
@@ -202,7 +231,8 @@ impl Parser<'_, '_> {
                 let end = self.consume(TokenKind::RBrace)?;
                 let block_span = token.span().to(end.span());
                 if body.is_empty() {
-                    return Err(block_span.wrap(Error::EmptyBlockBody));
+                    self.error(block_span.wrap(Error::EmptyBlockBody));
+                    return Err(());
                 }
                 (ExprKind::Block { body }, block_span)
             }
@@ -304,7 +334,8 @@ impl Parser<'_, '_> {
 
             other => {
                 let error = Error::UnexpectedTokenInExpr { token: other };
-                return Err(token.span().wrap(error));
+                self.error(token.span().wrap(error));
+                return Err(());
             }
         };
 
@@ -350,7 +381,8 @@ impl Parser<'_, '_> {
                 // Check if lhs is a simple identifier
                 let ExprKind::Id(target) = lhs.kind else {
                     let error = Error::InvalidAssignmentTarget;
-                    return Err(lhs.span.wrap(error));
+                    self.error(lhs.span.wrap(error));
+                    return Err(());
                 };
 
                 let value = self.parse_expr_bp(rbp)?;
@@ -412,7 +444,8 @@ impl Parser<'_, '_> {
             TokenKind::LParen => {
                 // Ensure the lhs was just a simple ID parsed by nud
                 let ExprKind::Id(method) = lhs.kind else {
-                    return Err(lhs.span.wrap(Error::InvalidDispatch));
+                    self.error(lhs.span.wrap(Error::InvalidDispatch));
+                    return Err(());
                 };
 
                 // LParen was already consumed above.
@@ -430,8 +463,9 @@ impl Parser<'_, '_> {
             }
 
             other => {
-                let err = Error::UnexpectedOperator { got: other };
-                return Err(op_token.span().wrap(err));
+                let error = Error::UnexpectedOperator { got: other };
+                self.error(op_token.span().wrap(error));
+                return Err(());
             }
         };
 
@@ -467,7 +501,8 @@ impl Parser<'_, '_> {
         assert_eq!(next.kind, end_delim);
         if let Some(error) = require_one {
             if items.is_empty() {
-                return Err(next.span().wrap(error));
+                self.error(next.span().wrap(error));
+                return Err(());
             }
         }
 
@@ -558,7 +593,13 @@ impl Parser<'_, '_> {
             src,
             tokens,
             cursor: 0,
+            errors: Vec::new(),
         }
+    }
+
+    /// Adds an error and returns the error sentinel.
+    fn error(&mut self, error: Spanned<Error>) {
+        self.errors.push(error);
     }
 
     /// Checks whether the token can be skipped for parsing purposes.
@@ -601,10 +642,11 @@ impl Parser<'_, '_> {
             self.advance();
             Ok(c)
         } else {
-            Err(c.span().wrap(Error::Unexpected {
+            self.error(c.span().wrap(Error::Unexpected {
                 got: c.kind,
                 want: expect,
-            }))
+            }));
+            Err(())
         }
     }
 
@@ -616,10 +658,11 @@ impl Parser<'_, '_> {
             }
         }
         let c = self.peek();
-        Err(c.span().wrap(Error::UnexpectedAny {
+        self.error(c.span().wrap(Error::UnexpectedAny {
             got: c.kind,
             want: expect,
-        }))
+        }));
+        Err(())
     }
 
     /// Returns true while the current token does *not* match one of the
@@ -706,7 +749,6 @@ class OperatorList inherits Sanity {
 
     fn parse(src: &str) -> Program {
         let mut buf = Vec::with_capacity(1024);
-        let p = Parser::new(src, &mut buf);
-        p.parse().unwrap()
+        parse_program(src, &mut buf).unwrap()
     }
 }
