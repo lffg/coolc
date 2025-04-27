@@ -71,7 +71,7 @@ block (0..48)
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% CASE block error recovery OF EXPRESSION:
+%% CASE block error recovery of expr OF EXPRESSION:
 
 {
     1 + 2 *;
@@ -84,3 +84,22 @@ block (0..48)
 Error (13..14): UnexpectedTokenInExpr { token: Semicolon }
 Error (32..33): UnexpectedTokenInExpr { token: Star }
 Error (41..42): UnexpectedTokenInExpr { token: RBrace }
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% CASE block error recovery of program OF PROGRAM:
+
+class Main {
+    main() : Int {{
+        1 + 2 *;
+        4 + + 6;
+        * 8 + 9;
+    }};
+};
+
+%% ERROR WITH:
+
+Error (48..49): UnexpectedTokenInExpr { token: Semicolon }
+Error (75..76): UnexpectedTokenInExpr { token: Star }
+Error (88..89): UnexpectedTokenInExpr { token: RBrace }
+Error (92..93): Unexpected { got: RBrace, want: Identifier }

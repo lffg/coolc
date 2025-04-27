@@ -55,12 +55,12 @@ impl Parser<'_, '_> {
     fn parse_program(&mut self) -> Result<Program> {
         let mut classes = Vec::with_capacity(4);
         while self.except([]) {
-            if let Ok(parsed) = self.synchronize(&[TokenKind::Class], &[], Parser::parse_class) {
+            if let Ok(parsed) = self.synchronize(&[], &[TokenKind::Class], Parser::parse_class) {
                 classes.push(parsed);
             }
         }
         self.consume(TokenKind::Eof)?;
-        if classes.is_empty() {
+        if classes.is_empty() && self.errors.is_empty() {
             let s = Span::new_of_length(0, u32::try_from(self.src.len()).unwrap());
             self.error(s.wrap(Error::EmptyProgram));
             Err(())
