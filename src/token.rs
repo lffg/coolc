@@ -1,9 +1,13 @@
-use std::{fmt, ops::Range};
+use std::{cmp, fmt, ops::Range};
 
 #[derive(Copy, Clone)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Token {
     lo: u32,
+    /// We assume that no *single* token can be more than 2^16 (65.536) bytes
+    /// long. Notice that a [`Span`] must have a higher "capacity" since it may
+    /// encompass entire regions of a program, which in reasonable cases can
+    /// surpass 2^16 bytes.
     len: u16,
     pub kind: TokenKind,
 }
@@ -11,16 +15,16 @@ pub struct Token {
 impl Token {
     pub fn new(kind: TokenKind, span: Span) -> Token {
         Token {
-            lo: u32::try_from(span.lo).unwrap(),
-            len: u16::try_from(span.len).unwrap(),
+            lo: span.lo,
+            len: u16::try_from(span.hi - span.lo).unwrap(),
             kind,
         }
     }
 
     pub fn span(&self) -> Span {
         Span {
-            lo: u32::try_from(self.lo).unwrap(),
-            len: u16::from(self.len),
+            lo: self.lo,
+            hi: self.lo + u32::from(self.len),
         }
     }
 
@@ -52,7 +56,7 @@ pub struct Spanned<T> {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Span {
     pub lo: u32,
-    pub len: u16,
+    pub hi: u32,
 }
 
 impl Span {
@@ -60,27 +64,34 @@ impl Span {
         debug_assert!(hi >= lo);
         Span {
             lo: u32::try_from(lo).unwrap(),
-            len: u16::try_from(hi - lo).unwrap(),
+            hi: u32::try_from(hi).unwrap(),
         }
     }
 
-    pub fn new_of_length(lo: u32, len: u16) -> Span {
-        Span { lo, len }
+    pub fn new_of_length(lo: u32, len: u32) -> Span {
+        Span { lo, hi: lo + len }
     }
 
+    #[must_use]
+    pub fn to(self, other: Span) -> Span {
+        let lo = cmp::min(self.lo, other.lo);
+        let hi = cmp::max(self.hi, other.hi);
+        Span { lo, hi }
+    }
+
+    #[must_use]
     pub fn offset(self, lo: i8, hi: i8) -> Span {
         let lo_64 = (i64::from(self.lo)).checked_add(i64::from(lo)).unwrap();
-        let len_32 = (i32::from(self.len)).checked_add(i32::from(hi)).unwrap();
+        let hi_64 = (i64::from(self.hi)).checked_add(i64::from(hi)).unwrap();
         Span {
             lo: u32::try_from(lo_64).unwrap(),
-            len: u16::try_from(len_32).unwrap(),
+            hi: u32::try_from(hi_64).unwrap(),
         }
     }
 
     pub fn substr(self, src: &str) -> &str {
         let lo = usize::try_from(self.lo).unwrap();
-        let len = usize::try_from(self.len).unwrap();
-        let hi = lo + len;
+        let hi = usize::try_from(self.hi).unwrap();
         &src[lo..hi]
     }
 
@@ -91,14 +102,14 @@ impl Span {
 
 impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Span({self}, len: {})", self.len)
+        write!(f, "Span({self}, len: {})", self.hi - self.lo)
     }
 }
 
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let lo = self.lo;
-        let hi = lo + u32::from(self.len);
+        let hi = self.hi;
         write!(f, "{lo}..{hi}")
     }
 }

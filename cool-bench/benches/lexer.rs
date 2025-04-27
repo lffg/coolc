@@ -11,7 +11,7 @@ fn lexer(input: &str, tokens: &mut Vec<Token>) {
     lex(input, tokens);
     let mut i = 0;
     for token in tokens {
-        if matches!(token.kind, TokenKind::Error(_)) {
+        if token.kind.is_error() {
             continue;
         }
         if matches!(token.kind, TokenKind::Eof) {

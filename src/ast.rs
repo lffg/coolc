@@ -1,5 +1,5 @@
 // program ::= (class ';')+
-// class ::= class TYPE [inherits TYPE] '{' feature* '}'
+// class ::= class TYPE [inherits TYPE] '{' (feature;) * '}'
 // feature ::= ID '(' [formal (',' formal)*] ')' ':' TYPE '{' expr '}'
 //           | ID ':' TYPE [<- expr]
 // formal ::= ID ':' TYPE
@@ -33,22 +33,29 @@
 //
 // .
 // @
-// ~ isvoid */ +-
-// <= < = not
+// ~
+// isvoid
+// * /
+// + -
+// <= < =
+// not
 // <-
 
 use crate::token::Span;
 
+#[derive(Debug, PartialEq, Default)]
 pub struct Program {
     pub classes: Vec<Class>,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Class {
     pub name: Type,
     pub inherits: Option<Type>,
     pub features: Vec<Feature>,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum Feature {
     Attribute(Binding),
     Method {
@@ -60,30 +67,34 @@ pub enum Feature {
     },
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Binding {
     pub name: Ident,
     pub ty: Type,
     pub initializer: Option<Expr>,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Formal {
     pub name: Ident,
     pub ty: Type,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum ExprKind {
     Assignment {
-        name: Ident,
-        ty: Type,
+        target: Ident,
+        value: Box<Expr>,
     },
     Dispatch {
         qualifier: Option<DispatchQualifier>,
-        ident: Ident,
+        method: Ident,
         args: Vec<Expr>,
     },
     Conditional {
@@ -121,21 +132,24 @@ pub enum ExprKind {
     Paren(Box<Expr>),
     Id(Ident),
     Int(i64),
-    String(String),
+    String(Box<str>),
     Bool(bool),
 }
 
+#[derive(Debug, PartialEq)]
 pub struct DispatchQualifier {
     pub expr: Box<Expr>,
     pub ty: Type,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct CaseArm {
     pub name: Ident,
     pub ty: Type,
     pub body: Box<Expr>,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum UnaryOperator {
     New,
     IsVoid,
@@ -143,17 +157,21 @@ pub enum UnaryOperator {
     Not,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum BinaryOperator {
     Add,
     Sub,
     Mul,
     Div,
+    Eq,
     Le,
     Leq,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Type(pub Ident);
 
+#[derive(Debug, PartialEq)]
 pub struct Ident {
     pub ident: Box<str>,
     pub span: Span,

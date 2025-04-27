@@ -19,6 +19,9 @@ enum_glob_use = { level = "allow", priority = 2 }
 wildcard_imports = { level = "allow", priority = 2 }
 missing_panics_doc = { level = "allow", priority = 2 }
 must_use_candidate = { level = "allow", priority = 2 }
+missing_errors_doc = { level = "allow", priority = 2 }
+too_many_lines = { level = "allow", priority = 2 }
+match_same_arms = { level = "allow", priority = 2 }
 
 [package]
 name = "cool"

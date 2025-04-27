@@ -1,19 +1,19 @@
-use std::{iter::Peekable, num::ParseIntError, ops::Range};
+use std::{iter::Peekable, num::ParseIntError};
 
 use crate::token::{Span, Token, TokenKind, KEYWORDS};
 
 pub const SUGGESTED_TOKENS_CAPACITY: usize = 8_192;
 
 /// Lexes the provided string, producing the tokens into the provided buffer.
-pub fn lex(input: &str, tokens: &mut Vec<Token>) {
-    Lexer::new(input, tokens).lex();
+pub fn lex(src: &str, tokens: &mut Vec<Token>) {
+    Lexer::new(src, tokens).lex();
 }
 
 /// A convenience function that allocates a new buffer per lexed input and
 /// returns it.
-pub fn lex_in_new(input: &str) -> Vec<Token> {
+pub fn lex_in_new(src: &str) -> Vec<Token> {
     let mut tokens = Vec::with_capacity(SUGGESTED_TOKENS_CAPACITY);
-    lex(input, &mut tokens);
+    lex(src, &mut tokens);
     tokens
 }
 
@@ -145,7 +145,7 @@ impl Lexer<'_, '_> {
         }
         let substr = self.substr();
         let lower = substr.to_ascii_lowercase();
-        match KEYWORDS.get(&lower).cloned() {
+        match KEYWORDS.get(&lower).copied() {
             // Even though keywords are "totally" case insensitive, booleans are
             // case insensitive except for the first character, which must
             // always be in lowercase.
@@ -288,10 +288,6 @@ pub mod extract {
         let s = token.span().offset(1, -1).substr(src);
         perform_escape(s).into_boxed_str()
     }
-}
-
-fn id<T>(val: T) -> T {
-    val
 }
 
 fn perform_escape(raw: &str) -> String {
