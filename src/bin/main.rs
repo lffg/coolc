@@ -92,7 +92,7 @@ fn pipeline(src: &str, tokens: &mut Vec<Token>) {
 // Helper function to report errors with context
 fn report_error(src: &str, error: &Spanned<parser::Error>) {
     let span = error.span;
-    let error = error.inner;
+    let error = error.inner.clone();
 
     // Try to find line number and column
     let mut line = 1;

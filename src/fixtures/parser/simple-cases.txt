@@ -82,3 +82,5 @@ block (0..48)
 %% ERROR WITH:
 
 Error (13..14): UnexpectedTokenInExpr { token: Semicolon }
+Error (32..33): UnexpectedTokenInExpr { token: Star }
+Error (41..42): UnexpectedTokenInExpr { token: RBrace }

@@ -55,7 +55,9 @@ impl Parser<'_, '_> {
     fn parse_program(&mut self) -> Result<Program> {
         let mut classes = Vec::with_capacity(4);
         while self.except([]) {
-            classes.push(self.parse_class()?);
+            if let Ok(parsed) = self.synchronize(&[TokenKind::Class], &[], Parser::parse_class) {
+                classes.push(parsed);
+            }
         }
         self.consume(TokenKind::Eof)?;
         if classes.is_empty() {
@@ -223,18 +225,19 @@ impl Parser<'_, '_> {
 
             // Block: { expr; expr; ... }
             TokenKind::LBrace => {
-                let mut body = Vec::new();
-                while self.except([TokenKind::RBrace]) {
-                    body.push(self.parse_expr()?);
-                    self.consume(TokenKind::Semicolon)?;
-                }
+                let body = self.parse_list(
+                    TokenKind::RBrace,
+                    TokenKind::Semicolon,
+                    Some(Error::EmptyBlockBody),
+                    Parser::parse_expr,
+                )?;
                 let end = self.consume(TokenKind::RBrace)?;
-                let block_span = token.span().to(end.span());
+                let span = token.span().to(end.span());
                 if body.is_empty() {
-                    self.error(block_span.wrap(Error::EmptyBlockBody));
+                    self.error(span.wrap(Error::EmptyBlockBody));
                     return Err(());
                 }
-                (ExprKind::Block { body }, block_span)
+                (ExprKind::Block { body }, span)
             }
 
             // Prefix operators: ~, not, isvoid, new
@@ -290,13 +293,12 @@ impl Parser<'_, '_> {
 
             // Let: let binding [, binding]* in expr
             TokenKind::Let => {
-                let mut bindings = Vec::with_capacity(1);
-                // First binding (required)
-                bindings.push(self.parse_let_binding()?);
-                // Parse subsequent bindings prefixed by comma
-                while self.take(TokenKind::Comma) {
-                    bindings.push(self.parse_let_binding()?);
-                }
+                let bindings = self.parse_list(
+                    TokenKind::In,
+                    TokenKind::Comma,
+                    Some(Error::MissingLetBinding),
+                    Parser::parse_let_binding,
+                )?;
                 self.consume(TokenKind::In)?;
                 let body = self.parse_expr()?;
 
@@ -485,15 +487,23 @@ impl Parser<'_, '_> {
 
         let mut items = Vec::new();
         while self.except([end_delim]) {
-            items.push(parse_item(self)?);
+            let item = self.synchronize(&[separator], &[end_delim], |p| parse_item(p))?;
+            items.push(item);
 
-            // Last separator is optional
-            let sep_result = self.consume(separator);
-            if let Err(error) = sep_result {
-                if self.peek().kind == end_delim {
+            // After consuming an item, we must consume the separator.
+            if !self.take(separator) {
+                if self.is(end_delim) {
+                    // If, however, it is not present, then we check if the end
+                    // delimiter is current. If so, we can stop.
                     break;
                 }
-                return Err(error);
+                // However, if the current token is not the separator nor
+                // the end delimiter, we must return an error.
+                let c = self.peek();
+                self.error(c.span().wrap(Error::UnexpectedAny {
+                    got: c.kind,
+                    want: Box::from([separator, end_delim]),
+                }));
             }
         }
 
@@ -678,7 +688,7 @@ impl Parser<'_, '_> {
         let c = self.peek();
         self.error(c.span().wrap(Error::UnexpectedAny {
             got: c.kind,
-            want: expect,
+            want: Box::from(expect),
         }));
         Err(())
     }
@@ -699,9 +709,36 @@ impl Parser<'_, '_> {
         }
         true
     }
+
+    fn synchronize<T>(
+        &mut self,
+        cont_cond: &[TokenKind],
+        stop_cond: &[TokenKind],
+        mut f: impl FnMut(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        'outer: loop {
+            if let Ok(val) = f(self) {
+                return Ok(val);
+            }
+            // In the case of an error, try to advance until find a token
+            // specified in `cont_cond` (in which case we retry) or in
+            // `stop_cond` (in which case we stop).
+            loop {
+                let c = self.advance().kind;
+                // Check whether must stop
+                if c == TokenKind::Eof || stop_cond.contains(&c) {
+                    return Err(());
+                }
+                // Check whether can retry
+                if cont_cond.contains(&c) {
+                    continue 'outer;
+                }
+            }
+        }
+    }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     InvalidAssignmentTarget,
     InvalidDispatch,
@@ -714,7 +751,7 @@ pub enum Error {
     },
     UnexpectedAny {
         got: TokenKind,
-        want: &'static [TokenKind],
+        want: Box<[TokenKind]>,
     },
     UnexpectedOperator {
         got: TokenKind,
@@ -722,6 +759,7 @@ pub enum Error {
     EmptyProgram,
     EmptyBlockBody,
     EmptyCase,
+    MissingLetBinding,
     ParseInt,
     /// A token kind which holds the [`TokenKind::is_error`] property.
     Lexer(TokenKind),
