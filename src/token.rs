@@ -1,6 +1,6 @@
 use std::{fmt, ops::Range};
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Token {
     lo: u32,
@@ -19,8 +19,16 @@ impl Token {
 
     pub fn span(&self) -> Span {
         Span {
-            len: u32::from(self.len),
-            lo: usize::try_from(self.lo).unwrap(),
+            lo: u32::try_from(self.lo).unwrap(),
+            len: u16::from(self.len),
+        }
+    }
+
+    pub fn eof_for(src: &str) -> Token {
+        Token {
+            lo: u32::try_from(src.len()).unwrap(),
+            len: 0,
+            kind: TokenKind::Eof,
         }
     }
 
@@ -35,20 +43,49 @@ impl fmt::Debug for Token {
     }
 }
 
+#[derive(Debug)]
+pub struct Spanned<T> {
+    pub span: Span,
+    pub inner: T,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Span {
-    pub len: u32,
-    pub lo: usize,
+    pub lo: u32,
+    pub len: u16,
 }
 
 impl Span {
     pub fn new_of_bounds(Range { start: lo, end: hi }: Range<usize>) -> Span {
         debug_assert!(hi >= lo);
-        Self::new_of_length(lo, u32::try_from(hi - lo).unwrap())
+        Span {
+            lo: u32::try_from(lo).unwrap(),
+            len: u16::try_from(hi - lo).unwrap(),
+        }
     }
 
-    pub fn new_of_length(lo: usize, len: u32) -> Span {
-        Span { len, lo }
+    pub fn new_of_length(lo: u32, len: u16) -> Span {
+        Span { lo, len }
+    }
+
+    pub fn offset(self, lo: i8, hi: i8) -> Span {
+        let lo_64 = (i64::from(self.lo)).checked_add(i64::from(lo)).unwrap();
+        let len_32 = (i32::from(self.len)).checked_add(i32::from(hi)).unwrap();
+        Span {
+            lo: u32::try_from(lo_64).unwrap(),
+            len: u16::try_from(len_32).unwrap(),
+        }
+    }
+
+    pub fn substr(self, src: &str) -> &str {
+        let lo = usize::try_from(self.lo).unwrap();
+        let len = usize::try_from(self.len).unwrap();
+        let hi = lo + len;
+        &src[lo..hi]
+    }
+
+    pub fn wrap<T>(self, inner: T) -> Spanned<T> {
+        Spanned { span: self, inner }
     }
 }
 
@@ -61,7 +98,7 @@ impl fmt::Debug for Span {
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let lo = self.lo;
-        let hi = lo + self.len as usize;
+        let hi = lo + u32::from(self.len);
         write!(f, "{lo}..{hi}")
     }
 }
@@ -110,9 +147,13 @@ pub enum TokenKind {
     Semicolon,
     Comma,
     Dot,
+    /// (
     LParen,
+    /// )
     RParen,
+    /// {
     LBrace,
+    /// }
     RBrace,
     At,
 

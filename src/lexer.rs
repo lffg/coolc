@@ -1,4 +1,4 @@
-use std::{iter::Peekable, ops::Range};
+use std::{iter::Peekable, num::ParseIntError, ops::Range};
 
 use crate::token::{Span, Token, TokenKind, KEYWORDS};
 
@@ -243,19 +243,14 @@ impl Lexer<'_, '_> {
         self.iter.peek().copied().unwrap_or('\0')
     }
 
-    /// Returns the current range.
-    fn range(&self) -> Range<usize> {
-        self.current_lo..self.cursor
-    }
-
     /// Returns the current span.
     fn span(&self) -> Span {
-        Span::new_of_bounds(self.range())
+        Span::new_of_bounds(self.current_lo..self.cursor)
     }
 
     /// Returns the substring of the current marked bounds.
     fn substr(&self) -> &str {
-        &self.src[self.range()]
+        self.span().substr(self.src)
     }
 
     /// Produces a token using the marked bounds.
@@ -269,7 +264,37 @@ impl Lexer<'_, '_> {
     }
 }
 
-pub fn perform_escape(raw: &str) -> String {
+pub mod extract {
+    use super::*;
+
+    pub fn int(token: Token, src: &str) -> Result<i64, ParseIntError> {
+        debug_assert_eq!(token.kind, TokenKind::Number);
+        token.span().substr(src).parse()
+    }
+
+    pub fn ident(token: Token, src: &str) -> Box<str> {
+        debug_assert_eq!(token.kind, TokenKind::Identifier);
+        token.span().substr(src).to_string().into_boxed_str()
+    }
+
+    pub fn string(token: Token, src: &str) -> Box<str> {
+        debug_assert_eq!(token.kind, TokenKind::String);
+        let s = token.span().offset(1, -1).substr(src);
+        s.to_string().into_boxed_str()
+    }
+
+    pub fn escaped_string(token: Token, src: &str) -> Box<str> {
+        debug_assert_eq!(token.kind, TokenKind::EscapedString);
+        let s = token.span().offset(1, -1).substr(src);
+        perform_escape(s).into_boxed_str()
+    }
+}
+
+fn id<T>(val: T) -> T {
+    val
+}
+
+fn perform_escape(raw: &str) -> String {
     let mut buf = String::with_capacity(raw.len());
     let mut escaped = false;
     for char in raw.chars() {
