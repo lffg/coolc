@@ -71,7 +71,7 @@ impl Parser<'_, '_> {
         self.consume(TokenKind::Class)?;
         let name = self.parse_type()?;
 
-        let inherits = if self.consume(TokenKind::Inherits).is_ok() {
+        let inherits = if self.take(TokenKind::Inherits) {
             let inherited = self.parse_type()?;
             Some(inherited)
         } else {
@@ -137,7 +137,7 @@ impl Parser<'_, '_> {
     }
 
     fn parse_initializer(&mut self) -> Result<Option<Expr>> {
-        if self.consume(TokenKind::Assign).is_err() {
+        if !self.take(TokenKind::Assign) {
             return Ok(None);
         }
         let expr = self.parse_expr()?;
@@ -294,7 +294,7 @@ impl Parser<'_, '_> {
                 // First binding (required)
                 bindings.push(self.parse_let_binding()?);
                 // Parse subsequent bindings prefixed by comma
-                while self.consume(TokenKind::Comma).is_ok() {
+                while self.take(TokenKind::Comma) {
                     bindings.push(self.parse_let_binding()?);
                 }
                 self.consume(TokenKind::In)?;
@@ -615,30 +615,47 @@ impl Parser<'_, '_> {
     ///
     /// Advances if the current token is trivia.
     #[inline]
-    fn peek(&mut self) -> Token {
-        loop {
-            match self.tokens.get(self.cursor) {
-                Some(token) if Self::is_trivia(token.kind) => {
-                    self.cursor += 1;
-                    continue;
-                }
-                Some(token) => return *token,
-                None => return Token::eof_for(self.src),
-            }
+    fn peek(&self) -> Token {
+        match self.tokens.get(self.cursor) {
+            Some(token) => *token,
+            None => Token::eof_for(self.src),
         }
     }
 
-    /// Returns the current token and advances.
+    /// Returns the current token and advances. Skips any trivia.
     fn advance(&mut self) -> Token {
-        let c = self.peek();
-        self.cursor += 1;
+        let c = self.peek(); // Before any advancement
+        debug_assert!(!Self::is_trivia(c.kind));
+        while {
+            self.cursor += 1;
+            Self::is_trivia(self.peek().kind)
+        } {}
+        // Previous while must guarantee this property
+        debug_assert!(!Self::is_trivia(c.kind));
         c
     }
 
-    /// Advances if the provided token matches the current token. Errors if not.
+    /// Checks whether the current token matches the given one.
+    fn is(&self, expect: TokenKind) -> bool {
+        self.peek().kind == expect
+    }
+
+    /// Advances if the current token matches the provided one, returning true.
+    /// If not, returns false and doesn't advance.
+    fn take(&mut self, expect: TokenKind) -> bool {
+        if self.is(expect) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Advances if the current token matches the provided one, returning true.
+    /// If not, records an error.
     fn consume(&mut self, expect: TokenKind) -> Result<Token> {
         let c = self.peek();
-        if c.kind == expect {
+        if self.is(expect) {
             self.advance();
             Ok(c)
         } else {
@@ -650,11 +667,12 @@ impl Parser<'_, '_> {
         }
     }
 
-    /// Advances if matches any of the provided tokens.
+    /// Advances if the current token matches any of the provided tokens,
+    /// returning true. If not, records an error.
     fn consume_any(&mut self, expect: &'static [TokenKind]) -> Result<Token> {
         for t in expect {
-            if let Ok(token) = self.consume(*t) {
-                return Ok(token);
+            if self.is(*t) {
+                return Ok(self.advance());
             }
         }
         let c = self.peek();
