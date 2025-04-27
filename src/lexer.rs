@@ -81,7 +81,7 @@ impl Lexer<'_, '_> {
             c if c.is_ascii_alphabetic() => self.identifier_or_keyword(),
             c if c.is_ascii_digit() => self.number(),
             c if c.is_ascii_whitespace() => self.whitespace(),
-            _ => TokenKind::Error(self::Error::UnexpectedChar),
+            _ => TokenKind::ErrorUnexpectedChar,
         }
     }
 
@@ -106,23 +106,21 @@ impl Lexer<'_, '_> {
                 // Since there's not else to be done (the input has exhausted),
                 // the scanner exists here with a single error token.
                 (_, '\0') => {
-                    return TokenKind::Error(Error::UnclosedString);
+                    return TokenKind::ErrorUnclosedString;
                 }
                 // An unescaped quotation mark marks the end of the string.
                 (false, '"') => {
-                    let raw = self.substr_bounded(1, -1);
-                    let string = if has_escaped {
-                        perform_escape(raw)
+                    return if has_escaped {
+                        TokenKind::EscapedString
                     } else {
-                        raw.to_string()
+                        TokenKind::String
                     };
-                    return TokenKind::String(string);
                 }
                 // A string can only contain a line break if it is escaped. In
                 // this case, an error token is emitted. Notice that the lexer
                 // keeps scanning the string.
                 (false, '\n') => {
-                    self.produce_spanned(TokenKind::Error(Error::UnescapedLineBreak), current_span);
+                    self.produce_spanned(TokenKind::ErrorUnescapedLineBreak, current_span);
                 }
                 // Mark a new escape context.
                 (false, '\\') => {
@@ -152,10 +150,10 @@ impl Lexer<'_, '_> {
             // case insensitive except for the first character, which must
             // always be in lowercase.
             Some(TokenKind::True | TokenKind::False) if !valid_boolean(substr) => {
-                TokenKind::Identifier(self.substr().to_string())
+                TokenKind::Identifier
             }
             Some(keyword) => keyword,
-            None => TokenKind::Identifier(self.substr().to_string()),
+            None => TokenKind::Identifier,
         }
     }
 
@@ -163,17 +161,14 @@ impl Lexer<'_, '_> {
         while self.peek().is_ascii_digit() {
             self.advance();
         }
-        match self.substr().parse() {
-            Ok(number) => TokenKind::Number(number),
-            Err(_) => TokenKind::Error(Error::ParseInt),
-        }
+        TokenKind::Number
     }
 
     fn whitespace(&mut self) -> TokenKind {
         while self.peek().is_ascii_whitespace() {
             self.advance();
         }
-        TokenKind::Whitespace(self.substr().to_string())
+        TokenKind::Whitespace
     }
 
     fn inline_comment(&mut self) -> TokenKind {
@@ -181,7 +176,7 @@ impl Lexer<'_, '_> {
         while !matches!(self.peek(), '\n' | '\0') {
             self.advance();
         }
-        TokenKind::Comment(self.substr_bounded(2, 0).to_string())
+        TokenKind::InlineComment
     }
 
     fn multiline_comment(&mut self) -> TokenKind {
@@ -189,16 +184,16 @@ impl Lexer<'_, '_> {
         loop {
             match self.advance() {
                 '*' => (), // start closing comment
-                '\0' => return TokenKind::Error(Error::UnclosedComment),
+                '\0' => return TokenKind::ErrorUnclosedComment,
                 _ => continue, // keep scanning comment...
             }
             match self.advance() {
                 ')' => break, // finished closing comment
-                '\0' => return TokenKind::Error(Error::UnclosedComment),
+                '\0' => return TokenKind::ErrorUnclosedComment,
                 _ => continue, // sadly couldn't close it! keep scanning...
             }
         }
-        TokenKind::Comment(self.substr_bounded(2, -2).to_string())
+        TokenKind::MultilineComment
     }
 }
 
@@ -263,18 +258,6 @@ impl Lexer<'_, '_> {
         &self.src[self.range()]
     }
 
-    /// Returns a substring with custom bounds increments.
-    ///
-    /// Callers should (a) ensure that the operation is semantically correct to
-    /// the specific token; (b) ensure that no overflows may occur; and (c) that
-    /// the access will be within the source string's bounds.
-    fn substr_bounded(&self, lo: isize, hi: isize) -> &str {
-        let Range { start, end } = self.range();
-        let lo = start.checked_add_signed(lo).unwrap();
-        let hi = end.checked_add_signed(hi).unwrap();
-        &self.src[lo..hi]
-    }
-
     /// Produces a token using the marked bounds.
     fn produce(&mut self, kind: TokenKind) {
         self.produce_spanned(kind, self.span());
@@ -286,7 +269,7 @@ impl Lexer<'_, '_> {
     }
 }
 
-fn perform_escape(raw: &str) -> String {
+pub fn perform_escape(raw: &str) -> String {
     let mut buf = String::with_capacity(raw.len());
     let mut escaped = false;
     for char in raw.chars() {
@@ -311,15 +294,6 @@ fn perform_escape(raw: &str) -> String {
     buf
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Error {
-    UnexpectedChar,
-    UnclosedComment,
-    UnclosedString,
-    UnescapedLineBreak,
-    ParseInt,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,15 +302,12 @@ mod tests {
     #[test]
     fn test_stack_machine_no_errors() {
         let input = include_str!("../examples/stack-machine.cool");
-        let has_errors = lex_in_new(input)
-            .into_iter()
-            .any(|t| matches!(t.kind, TokenKind::Error(_)));
+        let has_errors = lex_in_new(input).into_iter().any(|t| t.kind.is_error());
         assert!(!has_errors);
     }
 
     #[test]
     fn tests_with_span() {
-        use super::Error as E;
         use TokenKind::*;
         let cases = cases!(match .. {
             "+-*/" => [
@@ -365,126 +336,121 @@ mod tests {
                 (Slash, 14..15),
                 (True, 15..19),
                 (Slash, 19..20),
-                (Identifier("True".into()), 20..24),
+                (Identifier, 20..24),
                 (Slash, 24..25),
-                (Identifier("TRUE".into()), 25..29),
+                (Identifier, 25..29),
                 (Eof, 29..29),
             ],
             "1/11/111/01/001/123456789" => [
-                (Number(1), 0..1),
+                (Number, 0..1),
                 (Slash, 1..2),
-                (Number(11), 2..4),
+                (Number, 2..4),
                 (Slash, 4..5),
-                (Number(111), 5..8),
+                (Number, 5..8),
                 (Slash, 8..9),
-                (Number(1), 9..11),
+                (Number, 9..11),
                 (Slash, 11..12),
-                (Number(1), 12..15),
+                (Number, 12..15),
                 (Slash, 15..16),
-                (Number(123456789), 16..25),
+                (Number, 16..25),
                 (Eof, 25..25),
             ],
             "f/fo/foo/B/BA/BAR/a123z" => [
-                (Identifier("f".into()), 0..1),
+                (Identifier, 0..1),
                 (Slash, 1..2),
-                (Identifier("fo".into()), 2..4),
+                (Identifier, 2..4),
                 (Slash, 4..5),
-                (Identifier("foo".into()), 5..8),
+                (Identifier, 5..8),
                 (Slash, 8..9),
-                (Identifier("B".into()), 9..10),
+                (Identifier, 9..10),
                 (Slash, 10..11),
-                (Identifier("BA".into()), 11..13),
+                (Identifier, 11..13),
                 (Slash, 13..14),
-                (Identifier("BAR".into()), 14..17),
+                (Identifier, 14..17),
                 (Slash, 17..18),
-                (Identifier("a123z".into()), 18..23),
+                (Identifier, 18..23),
                 (Eof, 23..23),
             ],
             r#"""/"oi como vai"/"oi"# => [
-                (String("".into()), 0..2),
+                (String, 0..2),
                 (Slash, 2..3),
-                (String("oi como vai".into()), 3..16),
+                (String, 3..16),
                 (Slash, 16..17),
-                (Error(E::UnclosedString), 17..20),
+                (ErrorUnclosedString, 17..20),
                 (Eof, 20..20),
             ],
             r#"("\"")("\\")("\\\\")("\\\"")"# => [
                 (LParen, 0..1),
-                (String(r#"""#.into()), 1..5),
+                (EscapedString, 1..5),
                 (RParen, 5..6),
                 (LParen, 6..7),
-                (String(r#"\"#.into()), 7..11),
+                (EscapedString, 7..11),
                 (RParen, 11..12),
                 (LParen, 12..13),
-                (String(r#"\\"#.into()), 13..19),
+                (EscapedString, 13..19),
                 (RParen, 19..20),
                 (LParen, 20..21),
-                (String(r#"\""#.into()), 21..27),
+                (EscapedString, 21..27),
                 (RParen, 27..28),
                 (Eof, 28..28),
             ],
-            r#""\a\b\c\d\e\f\g\h\i\j\k\l\m\n\o\p\q\r\s\t\u\v\w\x\y\z""# => [
-                (String("a\x08cde\x0cghijklm\nopqrs\tuvwxyz".into()), 0..54),
-                (Eof, 54..54),
-            ],
-            r#""oi\"# => [(Error(E::UnclosedString), 0..4), (Eof, 4..4),],
+            r#""\a\b\c\d\e\f\g\h\i\j\k\l\m\n\o\p\q\r\s\t\u\v\w\x\y\z""# =>
+                [(EscapedString, 0..54), (Eof, 54..54),],
+            r#""oi\"# => [(ErrorUnclosedString, 0..4), (Eof, 4..4),],
             "(\"hello\\\nworld!\") (\"won't\nwork\") (\"neither\nthis\none\")" => [
                 (LParen, 0..1),
-                (String("hello\nworld!".into()), 1..16),
+                (EscapedString, 1..16),
                 (RParen, 16..17),
-                (Whitespace(" ".into()), 17..18),
+                (Whitespace, 17..18),
                 (LParen, 18..19),
-                (Error(E::UnescapedLineBreak), 25..26),
-                (String("won't\nwork".into()), 19..31),
+                (ErrorUnescapedLineBreak, 25..26),
+                (String, 19..31),
                 (RParen, 31..32),
-                (Whitespace(" ".into()), 32..33),
+                (Whitespace, 32..33),
                 (LParen, 33..34),
-                (Error(E::UnescapedLineBreak), 42..43),
-                (Error(E::UnescapedLineBreak), 47..48),
-                (String("neither\nthis\none".into()), 34..52),
+                (ErrorUnescapedLineBreak, 42..43),
+                (ErrorUnescapedLineBreak, 47..48),
+                (String, 34..52),
                 (RParen, 52..53),
                 (Eof, 53..53),
             ],
             "hello (* world!\n this *) 1 (**) 2 -- is a\n\"comment!\"" => [
-                (Identifier("hello".into()), 0..5),
-                (Whitespace(" ".into()), 5..6),
-                (Comment(" world!\n this ".into()), 6..24),
-                (Whitespace(" ".into()), 24..25),
-                (Number(1), 25..26),
-                (Whitespace(" ".into()), 26..27),
-                (Comment("".into()), 27..31),
-                (Whitespace(" ".into()), 31..32),
-                (Number(2), 32..33),
-                (Whitespace(" ".into()), 33..34),
-                (Comment(" is a".into()), 34..41),
-                (Whitespace("\n".into()), 41..42),
-                (String("comment!".into()), 42..52),
+                (Identifier, 0..5),
+                (Whitespace, 5..6),
+                (MultilineComment, 6..24),
+                (Whitespace, 24..25),
+                (Number, 25..26),
+                (Whitespace, 26..27),
+                (MultilineComment, 27..31),
+                (Whitespace, 31..32),
+                (Number, 32..33),
+                (Whitespace, 33..34),
+                (InlineComment, 34..41),
+                (Whitespace, 41..42),
+                (String, 42..52),
                 (Eof, 52..52),
             ],
-            "-- line comment without line break" => [
-                (Comment(" line comment without line break".into()), 0..34),
-                (Eof, 34..34),
-            ],
+            "-- line comment without line break" => [(InlineComment, 0..34), (Eof, 34..34),],
             "(* unclosed" => [
                 //
-                (Error(E::UnclosedComment), 0..11),
+                (ErrorUnclosedComment, 0..11),
                 (Eof, 11..11),
             ],
             "(< <= <- > >= -) (<<=<->>=-)" => [
                 (LParen, 0..1),
                 (Less, 1..2),
-                (Whitespace(" ".into()), 2..3),
+                (Whitespace, 2..3),
                 (LessEq, 3..5),
-                (Whitespace(" ".into()), 5..6),
+                (Whitespace, 5..6),
                 (Assign, 6..8),
-                (Whitespace(" ".into()), 8..9),
+                (Whitespace, 8..9),
                 (Greater, 9..10),
-                (Whitespace(" ".into()), 10..11),
+                (Whitespace, 10..11),
                 (GreaterEq, 11..13),
-                (Whitespace(" ".into()), 13..14),
+                (Whitespace, 13..14),
                 (Minus, 14..15),
                 (RParen, 15..16),
-                (Whitespace(" ".into()), 16..17),
+                (Whitespace, 16..17),
                 (LParen, 17..18),
                 (Less, 18..19),
                 (LessEq, 19..21),

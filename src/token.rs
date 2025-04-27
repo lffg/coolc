@@ -1,28 +1,26 @@
 use std::{fmt, ops::Range};
 
-use crate::lexer;
-
 #[derive(Clone)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Token {
+    lo: u32,
+    len: u16,
     pub kind: TokenKind,
-    lo: usize,
-    len: u32,
 }
 
 impl Token {
     pub fn new(kind: TokenKind, span: Span) -> Token {
         Token {
+            lo: u32::try_from(span.lo).unwrap(),
+            len: u16::try_from(span.len).unwrap(),
             kind,
-            len: span.len,
-            lo: span.lo,
         }
     }
 
     pub fn span(&self) -> Span {
         Span {
-            len: self.len,
-            lo: self.lo,
+            len: u32::from(self.len),
+            lo: usize::try_from(self.lo).unwrap(),
         }
     }
 
@@ -70,7 +68,7 @@ impl fmt::Display for Span {
 
 // This is not the most efficient way of representing a token kind, but it
 // suffices for this simple compiler implementation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TokenKind {
     Class,
     Else,
@@ -118,14 +116,32 @@ pub enum TokenKind {
     RBrace,
     At,
 
-    Identifier(String),
-    String(String),
-    Number(i64),
+    Identifier,
+    String,
+    EscapedString,
+    Number,
 
-    Comment(String),
-    Whitespace(String),
+    InlineComment,
+    MultilineComment,
+    Whitespace,
     Eof,
-    Error(lexer::Error),
+
+    ErrorUnexpectedChar,
+    ErrorUnclosedComment,
+    ErrorUnclosedString,
+    ErrorUnescapedLineBreak,
+}
+
+impl TokenKind {
+    pub fn is_error(self) -> bool {
+        matches!(
+            self,
+            TokenKind::ErrorUnexpectedChar
+                | TokenKind::ErrorUnclosedComment
+                | TokenKind::ErrorUnclosedString
+                | TokenKind::ErrorUnescapedLineBreak
+        )
+    }
 }
 
 pub static KEYWORDS: phf::Map<&'static str, TokenKind> = phf::phf_map! {

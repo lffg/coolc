@@ -5,10 +5,7 @@ use std::{
     io::{self, Write},
 };
 
-use cool::{
-    lexer::{lex, SUGGESTED_TOKENS_CAPACITY},
-    token::TokenKind,
-};
+use cool::lexer::{lex, SUGGESTED_TOKENS_CAPACITY};
 
 fn main() {
     if let Err(error) = run() {
@@ -49,7 +46,7 @@ fn pipeline(input: &str) {
 
     for token in tokens {
         println!("{:?} @ {}", token.kind, token.span());
-        if let TokenKind::Error(_) = token.kind {
+        if token.kind.is_error() {
             errored = true;
         }
     }
