@@ -13,6 +13,12 @@ pub fn print_program_string(program: &Program) -> String {
     String::from_utf8(buf).unwrap()
 }
 
+pub fn print_expr_string(expr: &Expr) -> String {
+    let mut buf = Vec::with_capacity(512);
+    print_expr(&mut buf, 0, expr).unwrap();
+    String::from_utf8(buf).unwrap()
+}
+
 pub fn print_program(w: &mut impl Write, program: &Program) -> std::io::Result<()> {
     for class in &program.classes {
         print_class(w, 0, class)?;

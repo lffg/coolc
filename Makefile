@@ -3,6 +3,11 @@ CARGO := cargo
 SUBMISSION_PREFIX ?= lffg-
 SUBMISSION_DIR := submission
 
+.PHONY: test
+test:
+	$(CARGO) test
+	$(CARGO) run -q -p tester
+
 .PHONY: bench
 bench:
 	$(CARGO) bench -p cool-bench

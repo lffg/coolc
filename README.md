@@ -47,8 +47,11 @@ the standard input.
 The project's test suite can be run using:
 
 ```sh
-cargo test
+make test
 ```
+
+This runs all Cargo tests (usual Rust-style tests) and the custom test harness
+developed for this compiler, which is in the `scripts/tester` directory.
 
 # Implementation Remarks
 
