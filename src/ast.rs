@@ -41,6 +41,8 @@
 // not
 // <-
 
+use std::fmt;
+
 use crate::token::Span;
 
 #[derive(Debug, PartialEq, Default)]
@@ -171,8 +173,24 @@ pub enum BinaryOperator {
 #[derive(Debug, PartialEq)]
 pub struct Type(pub Ident);
 
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Ident {
     pub ident: Box<str>,
     pub span: Span,
+}
+
+impl fmt::Display for Ident {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.ident)?;
+        if f.alternate() {
+            write!(f, " {:?}", self.span)?;
+        }
+        Ok(())
+    }
 }

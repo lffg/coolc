@@ -5,7 +5,7 @@ use std::{
     io::{self, Write},
 };
 
-use cool::lexer::{lex, SUGGESTED_TOKENS_CAPACITY};
+use cool::{parser::Parser, util::fmt::print_program};
 
 fn main() {
     if let Err(error) = run() {
@@ -39,16 +39,10 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn pipeline(input: &str) {
-    let mut errored = false;
-    let mut tokens = Vec::with_capacity(SUGGESTED_TOKENS_CAPACITY);
+    let mut buf = Vec::with_capacity(8 * 1024);
 
-    lex(input, &mut tokens);
+    let parser = Parser::new(input, &mut buf);
+    let prog = parser.parse().unwrap();
 
-    for token in tokens {
-        println!("{:?} @ {}", token.kind, token.span());
-        if token.kind.is_error() {
-            errored = true;
-        }
-    }
-    println!("\nerror?= {errored}");
+    print_program(&mut io::stdout(), &prog).unwrap();
 }

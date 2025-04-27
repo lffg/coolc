@@ -674,8 +674,10 @@ impl From<std::num::ParseIntError> for Error {
 
 #[cfg(test)]
 mod tests {
+    use crate::util::fmt::print_program_string;
+
     use super::*;
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::*;
 
     #[test]
     fn test_empty_class() {
@@ -699,7 +701,7 @@ class OperatorList inherits Sanity {
 };
             "#,
         );
-        assert_eq!(parsed, Program::default());
+        assert_str_eq!(print_program_string(&parsed), "");
     }
 
     fn parse(src: &str) -> Program {
