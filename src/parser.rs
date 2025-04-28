@@ -599,17 +599,26 @@ impl Parser<'_, '_> {
 
 impl Parser<'_, '_> {
     pub fn new<'src, 'tok>(src: &'src str, tokens: &'tok mut Vec<Token>) -> Parser<'src, 'tok> {
-        Parser {
+        let mut p = Parser {
             src,
             tokens,
             cursor: 0,
             errors: Vec::new(),
-        }
+        };
+        p.setup();
+        p
     }
 
     /// Adds an error and returns the error sentinel.
     fn error(&mut self, error: Spanned<Error>) {
         self.errors.push(error);
+    }
+
+    /// Setups the parser, skipping any trivia if necessary.
+    fn setup(&mut self) {
+        while Self::is_trivia(self.peek().kind) {
+            self.advance();
+        }
     }
 
     /// Checks whether the token can be skipped for parsing purposes.
@@ -635,13 +644,10 @@ impl Parser<'_, '_> {
     /// Returns the current token and advances. Skips any trivia.
     fn advance(&mut self) -> Token {
         let c = self.peek(); // Before any advancement
-        debug_assert!(!Self::is_trivia(c.kind));
         while {
             self.cursor += 1;
             Self::is_trivia(self.peek().kind)
         } {}
-        // Previous while must guarantee this property
-        debug_assert!(!Self::is_trivia(c.kind));
         c
     }
 
