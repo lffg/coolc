@@ -508,7 +508,7 @@ impl Parser<'_, '_> {
         }
 
         let next = self.peek();
-        assert_eq!(next.kind, end_delim);
+        assert!(next.kind == end_delim || next.kind == TokenKind::Eof);
         if let Some(error) = require_one {
             if items.is_empty() {
                 self.error(next.span().wrap(error));
@@ -718,17 +718,20 @@ impl Parser<'_, '_> {
     ) -> Result<T> {
         'outer: loop {
             if let Ok(val) = f(self) {
-                return Ok(val);
+                break Ok(val);
             }
             // In the case of an error, try to advance until find a token
             // specified in `cont_cond` (in which case we retry) or in
             // `stop_cond` (in which case we stop).
             loop {
-                let c = self.advance().kind;
+                let c = self.peek().kind;
                 // Check whether must stop
                 if c == TokenKind::Eof || stop_cond.contains(&c) {
-                    return Err(());
+                    break 'outer Err(());
                 }
+                // The token advancement must be AFTER stopping. If we break
+                // out, the caller should advance (to follow the convention).
+                self.advance();
                 // Check whether can retry
                 if cont_cond.contains(&c) {
                     continue 'outer;
@@ -768,5 +771,33 @@ pub enum Error {
 impl From<std::num::ParseIntError> for Error {
     fn from(_: std::num::ParseIntError) -> Self {
         Error::ParseInt
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::util::fmt::print_expr_string;
+
+    use super::*;
+
+    #[test]
+    fn test() {
+        let mut buf = Vec::new();
+        let (ast, errors) = parse_expr(
+            "\
+{
+    {
+        1 + 2;
+        1 + + 2;
+    };
+    {
+        3 + 4;
+    };
+}",
+            &mut buf,
+        )
+        .unwrap_err();
+        println!("{}", print_expr_string(&ast));
+        println!("{:#?}", errors);
     }
 }

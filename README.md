@@ -122,6 +122,9 @@ synchronization point, where it can likely resume parsing correctly. As a
 result, the parser returns both a (potentially partial) AST and a list
 (`Vec<Spanned<Error>>`) of all syntax errors detected during the parse.
 
+The requested recovery cases are tested in the `requested-recovery-cases.txt`
+fixture.
+
 [cr-int]: https://craftinginterpreters.com/
 
 ### Testing

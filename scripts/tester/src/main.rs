@@ -300,8 +300,11 @@ fn run_test_case(test_case: &TestCase) -> Result<(), ()> {
                 parse_successful = true;
                 actual_output = print_program_string(&prog).trim().to_string();
             }
-            Err((_prog, errors)) => {
-                actual_output = format_errors(input_src, &errors).trim().to_string();
+            Err((prog, errors)) => {
+                let printed = print_program_string(&prog).trim().to_string();
+                actual_output = format_errors(input_src, &printed, &errors)
+                    .trim()
+                    .to_string();
             }
         },
         CaseType::Expression => match parser::parse_expr(input_src, &mut tokens) {
@@ -309,8 +312,11 @@ fn run_test_case(test_case: &TestCase) -> Result<(), ()> {
                 parse_successful = true;
                 actual_output = print_expr_string(&expr).trim().to_string();
             }
-            Err((_expr, errors)) => {
-                actual_output = format_errors(input_src, &errors).trim().to_string();
+            Err((expr, errors)) => {
+                let printed = print_expr_string(&expr).trim().to_string();
+                actual_output = format_errors(input_src, &printed, &errors)
+                    .trim()
+                    .to_string();
             }
         },
     }
@@ -358,7 +364,7 @@ fn run_test_case(test_case: &TestCase) -> Result<(), ()> {
 }
 
 // Helper function to format errors (same as before)
-fn format_errors(_: &str, errors: &[Spanned<parser::Error>]) -> String {
+fn format_errors(_: &str, printed: &str, errors: &[Spanned<parser::Error>]) -> String {
     let mut error_report = String::new();
     for error in errors {
         let span = error.span;
@@ -366,5 +372,7 @@ fn format_errors(_: &str, errors: &[Spanned<parser::Error>]) -> String {
 
         error_report.push_str(&format!("Error ({}): {:?}\n", span, error_kind));
     }
+    error_report.push_str("\n%% PARTIAL AST:\n\n");
+    error_report.push_str(printed);
     error_report
 }

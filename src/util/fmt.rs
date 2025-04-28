@@ -126,10 +126,13 @@ pub fn print_expr(w: &mut impl Write, i: usize, expr: &Expr) -> std::io::Result<
         ExprKind::Let { bindings, body } => {
             writeln!(w, "let ({span})")?;
             for binding in bindings {
+                sp(w, i + 1)?;
                 write!(w, "binding ")?;
                 print_binding(w, i + 1, binding)?;
             }
-            print_expr(w, i + 1, body)?;
+            sp(w, i + 1)?;
+            writeln!(w, "in")?;
+            print_expr(w, i + 2, body)?;
         }
         ExprKind::Case { predicate, arms } => {
             writeln!(w, "case ({span})")?;

@@ -40,6 +40,10 @@ class Main
 
 Error (7..7): UnexpectedTokenInExpr { token: Eof }
 
+%% PARTIAL AST:
+
+dummy (7..7)
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% CASE block OF EXPRESSION:
@@ -85,6 +89,10 @@ Error (13..14): UnexpectedTokenInExpr { token: Semicolon }
 Error (32..33): UnexpectedTokenInExpr { token: Star }
 Error (41..42): UnexpectedTokenInExpr { token: RBrace }
 
+%% PARTIAL AST:
+
+dummy (42..42)
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% CASE block error recovery of program OF PROGRAM:
@@ -102,4 +110,36 @@ class Main {
 Error (48..49): UnexpectedTokenInExpr { token: Semicolon }
 Error (75..76): UnexpectedTokenInExpr { token: Star }
 Error (88..89): UnexpectedTokenInExpr { token: RBrace }
-Error (92..93): Unexpected { got: RBrace, want: Identifier }
+
+%% PARTIAL AST:
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% CASE let with multiple bindings OF EXPRESSION:
+
+let x : Int <- 1 + 2,
+    y : Int <- 3 + 4,
+    z : Int <- 5 + 6 in
+      x + y + z
+
+%% OK WITH:
+
+let (0..83)
+  binding x: Int (initialized)
+    binary Add (15..20)
+      int 1 (15..16)
+      int 2 (19..20)
+  binding y: Int (initialized)
+    binary Add (37..42)
+      int 3 (37..38)
+      int 4 (41..42)
+  binding z: Int (initialized)
+    binary Add (59..64)
+      int 5 (59..60)
+      int 6 (63..64)
+  in
+    binary Add (74..83)
+      binary Add (74..79)
+        ident x (74..75)
+        ident y (78..79)
+      ident z (82..83)

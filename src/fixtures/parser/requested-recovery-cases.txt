@@ -1,0 +1,81 @@
+%% CASE recover in feature OF PROGRAM:
+
+class Main {
+    feature1() : Int {
+        1 +
+    };
+
+    feature2() : Int {
+        1 + 2
+    };
+};
+
+%% ERROR WITH:
+
+Error (52..53): UnexpectedTokenInExpr { token: RBrace }
+
+%% PARTIAL AST:
+
+class Main
+  method feature2() : Int
+    binary Add (87..92)
+      int 1 (87..88)
+      int 2 (91..92)
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% CASE recover in let with multiple bindings OF EXPRESSION:
+
+let x : Int <- 1 + 2,
+    y : Int <- (3+),
+    z : Int <- 5 + 6 in
+      x + y + z
+
+%% ERROR WITH:
+
+Error (40..41): UnexpectedTokenInExpr { token: RParen }
+
+%% PARTIAL AST:
+
+let (0..82)
+  binding x: Int (initialized)
+    binary Add (15..20)
+      int 1 (15..16)
+      int 2 (19..20)
+  binding z: Int (initialized)
+    binary Add (58..63)
+      int 5 (58..59)
+      int 6 (62..63)
+  in
+    binary Add (73..82)
+      binary Add (73..78)
+        ident x (73..74)
+        ident y (77..78)
+      ident z (81..82)
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% CASE continue in block OF EXPRESSION:
+
+{
+    {
+        1 + 2;
+        1 + + 2;
+    };
+    {
+        3 + 4;
+    };
+}
+
+%% ERROR WITH:
+
+Error (35..36): UnexpectedTokenInExpr { token: Plus }
+Error (44..45): UnexpectedTokenInExpr { token: RBrace }
+Error (76..76): UnexpectedAny { got: Eof, want: [Semicolon, RBrace] }
+Error (76..76): Unexpected { got: Eof, want: RBrace }
+
+%% PARTIAL AST:
+
+dummy (76..76)
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
