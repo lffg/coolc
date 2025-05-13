@@ -60,8 +60,8 @@ impl Program {
 
 #[derive(Debug, PartialEq)]
 pub struct Class {
-    pub name: Type,
-    pub inherits: Option<Type>,
+    pub name: TypeIdent,
+    pub inherits: Option<TypeIdent>,
     pub features: Vec<Feature>,
 }
 
@@ -72,7 +72,7 @@ pub enum Feature {
         name: Ident,
         /// List of parameters ("formal parameters").
         formals: Vec<Formal>,
-        return_ty: Type,
+        return_ty: TypeIdent,
         body: Expr,
     },
 }
@@ -80,14 +80,14 @@ pub enum Feature {
 #[derive(Debug, PartialEq)]
 pub struct Binding {
     pub name: Ident,
-    pub ty: Type,
+    pub ty: TypeIdent,
     pub initializer: Option<Expr>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Formal {
     pub name: Ident,
-    pub ty: Type,
+    pub ty: TypeIdent,
 }
 
 #[derive(Debug, PartialEq)]
@@ -159,13 +159,13 @@ pub enum ExprKind {
 #[derive(Debug, PartialEq)]
 pub struct DispatchQualifier {
     pub expr: Box<Expr>,
-    pub ty: Type,
+    pub ty: TypeIdent,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct CaseArm {
     pub name: Ident,
-    pub ty: Type,
+    pub ty: TypeIdent,
     pub body: Box<Expr>,
 }
 
@@ -189,9 +189,9 @@ pub enum BinaryOperator {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Type(pub Ident);
+pub struct TypeIdent(pub Ident);
 
-impl fmt::Display for Type {
+impl fmt::Display for TypeIdent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }

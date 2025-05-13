@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         BinaryOperator, Binding, CaseArm, Class, DispatchQualifier, Expr, ExprKind, Feature,
-        Formal, Ident, Program, Type, UnaryOperator,
+        Formal, Ident, Program, TypeIdent, UnaryOperator,
     },
     lexer::{self, extract},
     token::{Span, Spanned, Token, TokenKind},
@@ -146,8 +146,8 @@ impl Parser<'_, '_> {
         Ok(Some(expr))
     }
 
-    fn parse_type(&mut self) -> Result<Type> {
-        self.parse_ident().map(Type)
+    fn parse_type(&mut self) -> Result<TypeIdent> {
+        self.parse_ident().map(TypeIdent)
     }
 
     fn parse_ident(&mut self) -> Result<Ident> {
