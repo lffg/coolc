@@ -68,7 +68,7 @@ impl Span {
         }
     }
 
-    pub fn new_of_length(lo: u32, len: u32) -> Span {
+    pub const fn new_of_length(lo: u32, len: u32) -> Span {
         Span { lo, hi: lo + len }
     }
 

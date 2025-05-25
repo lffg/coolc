@@ -5,6 +5,7 @@ use crate::{
     },
     lexer::{self, extract},
     token::{Span, Spanned, Token, TokenKind},
+    types::builtins,
     util::intern::Interner,
 };
 
@@ -43,6 +44,13 @@ fn parse<'src, 'tok, 'ident, T>(
     default: impl FnOnce() -> T,
 ) -> ParseResult<T> {
     assert!(tokens.is_empty());
+    assert!(ident_interner.is_empty());
+
+    // Register built-in names
+    for &(expected_handle, name, _) in builtins::ALL {
+        let handle = ident_interner.intern(name);
+        assert_eq!(handle, expected_handle);
+    }
 
     // Lex and parse
     lexer::lex(src, tokens);
@@ -624,7 +632,7 @@ impl Parser<'_, '_, '_> {
             tokens,
             ident_interner,
             cursor: 0,
-            errors: Vec::new(),
+            errors: Vec::with_capacity(8),
         };
         p.setup();
         p

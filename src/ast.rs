@@ -186,8 +186,22 @@ pub enum BinaryOperator {
     Leq,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct TypeName(pub Ident);
+
+impl TypeName {
+    pub const fn new(name: Interned<str>, span: Span) -> TypeName {
+        TypeName(Ident { name, span })
+    }
+
+    pub fn name(&self) -> Interned<str> {
+        self.0.name
+    }
+
+    pub fn span(&self) -> Span {
+        self.0.span
+    }
+}
 
 impl From<TypeName> for Interned<str> {
     fn from(value: TypeName) -> Self {
@@ -201,7 +215,7 @@ impl From<&TypeName> for Interned<str> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Ident {
     pub name: Interned<str>,
     pub span: Span,

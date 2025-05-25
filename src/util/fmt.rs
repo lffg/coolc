@@ -37,7 +37,7 @@ fn print_class(
     class: &Class,
 ) -> std::io::Result<()> {
     sp(w, i)?;
-    write!(w, "class {}", idents.get(&class.name))?;
+    write!(w, "class {}", idents.get(class.name))?;
     if let Some(ref inherits) = class.inherits {
         write!(w, " inherits {}", idents.get(inherits))?;
     }
@@ -75,8 +75,8 @@ fn print_feature(
                 write!(
                     w,
                     "{}: {}",
-                    idents.get(&formal.name),
-                    idents.get(&formal.ty)
+                    idents.get(formal.name),
+                    idents.get(formal.ty)
                 )?;
             }
             write!(w, ") : {}", idents.get(return_ty))?;
@@ -96,8 +96,8 @@ fn print_binding(
     write!(
         w,
         "{}: {}",
-        idents.get(&binding.name),
-        idents.get(&binding.ty)
+        idents.get(binding.name),
+        idents.get(binding.ty)
     )?;
     if let Some(ref initializer) = binding.initializer {
         write!(w, " (initialized)")?;
@@ -217,7 +217,7 @@ fn print_dispatch_qualifier(
     qual: &DispatchQualifier,
 ) -> std::io::Result<()> {
     sp(w, i)?;
-    writeln!(w, "qualifier @ {}", idents.get(&qual.ty))?; // Indicate type association
+    writeln!(w, "qualifier @ {}", idents.get(qual.ty))?; // Indicate type association
     print_expr(w, idents, i + 1, &qual.expr)?; // Print the actual expression indented
     Ok(())
 }
@@ -232,8 +232,8 @@ fn print_case_arm(
     writeln!(
         w,
         "arm {}: {} =>",
-        idents.get(&arm.name),
-        idents.get(&arm.ty)
+        idents.get(arm.name),
+        idents.get(arm.ty)
     )?;
     print_expr(w, idents, i + 1, &arm.body)?;
     Ok(())
