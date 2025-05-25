@@ -41,9 +41,7 @@
 // not
 // <-
 
-use std::fmt;
-
-use crate::token::Span;
+use crate::{token::Span, util::intern::Interned};
 
 #[derive(Debug, PartialEq, Default)]
 pub struct Program {
@@ -60,8 +58,8 @@ impl Program {
 
 #[derive(Debug, PartialEq)]
 pub struct Class {
-    pub name: TypeIdent,
-    pub inherits: Option<TypeIdent>,
+    pub name: TypeName,
+    pub inherits: Option<TypeName>,
     pub features: Vec<Feature>,
 }
 
@@ -72,7 +70,7 @@ pub enum Feature {
         name: Ident,
         /// List of parameters ("formal parameters").
         formals: Vec<Formal>,
-        return_ty: TypeIdent,
+        return_ty: TypeName,
         body: Expr,
     },
 }
@@ -80,14 +78,14 @@ pub enum Feature {
 #[derive(Debug, PartialEq)]
 pub struct Binding {
     pub name: Ident,
-    pub ty: TypeIdent,
+    pub ty: TypeName,
     pub initializer: Option<Expr>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Formal {
     pub name: Ident,
-    pub ty: TypeIdent,
+    pub ty: TypeName,
 }
 
 #[derive(Debug, PartialEq)]
@@ -159,13 +157,13 @@ pub enum ExprKind {
 #[derive(Debug, PartialEq)]
 pub struct DispatchQualifier {
     pub expr: Box<Expr>,
-    pub ty: TypeIdent,
+    pub ty: TypeName,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct CaseArm {
     pub name: Ident,
-    pub ty: TypeIdent,
+    pub ty: TypeName,
     pub body: Box<Expr>,
 }
 
@@ -189,26 +187,34 @@ pub enum BinaryOperator {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct TypeIdent(pub Ident);
+pub struct TypeName(pub Ident);
 
-impl fmt::Display for TypeIdent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+impl From<TypeName> for Interned<str> {
+    fn from(value: TypeName) -> Self {
+        value.0.name
+    }
+}
+
+impl From<&TypeName> for Interned<str> {
+    fn from(value: &TypeName) -> Self {
+        value.0.name
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Ident {
-    pub ident: Box<str>,
+    pub name: Interned<str>,
     pub span: Span,
 }
 
-impl fmt::Display for Ident {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.ident)?;
-        if f.alternate() {
-            write!(f, " {:?}", self.span)?;
-        }
-        Ok(())
+impl From<Ident> for Interned<str> {
+    fn from(value: Ident) -> Self {
+        value.name
+    }
+}
+
+impl From<&Ident> for Interned<str> {
+    fn from(value: &Ident) -> Self {
+        value.name
     }
 }

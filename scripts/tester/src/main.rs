@@ -13,7 +13,10 @@ use pretty_assertions::assert_str_eq;
 use cool::{
     parser,
     token::Spanned,
-    util::fmt::{print_expr_string, print_program_string},
+    util::{
+        fmt::{print_expr_string, print_program_string},
+        intern::Interner,
+    },
 };
 
 // Constants remain the same
@@ -289,31 +292,32 @@ fn parse_case<'a>(block: &'a str, path: &Path) -> Result<TestCase<'a>, String> {
 /// Runs a single test case using standard assert_eq!.
 fn run_test_case(test_case: &TestCase) -> Result<(), ()> {
     let mut tokens = Vec::with_capacity(1024);
+    let mut interner = Interner::with_capacity(1024);
     let input_src = test_case.input;
     let actual_output;
     let mut parse_successful = false;
 
     // --- Parser Invocation (same as before) ---
     match test_case.case_type {
-        CaseType::Program => match parser::parse_program(input_src, &mut tokens) {
+        CaseType::Program => match parser::parse_program(input_src, &mut tokens, &mut interner) {
             Ok(prog) => {
                 parse_successful = true;
-                actual_output = print_program_string(&prog).trim().to_string();
+                actual_output = print_program_string(&interner, &prog).trim().to_string();
             }
             Err((prog, errors)) => {
-                let printed = print_program_string(&prog).trim().to_string();
+                let printed = print_program_string(&interner, &prog).trim().to_string();
                 actual_output = format_errors(input_src, &printed, &errors)
                     .trim()
                     .to_string();
             }
         },
-        CaseType::Expression => match parser::parse_expr(input_src, &mut tokens) {
+        CaseType::Expression => match parser::parse_expr(input_src, &mut tokens, &mut interner) {
             Ok(expr) => {
                 parse_successful = true;
-                actual_output = print_expr_string(&expr).trim().to_string();
+                actual_output = print_expr_string(&interner, &expr).trim().to_string();
             }
             Err((expr, errors)) => {
-                let printed = print_expr_string(&expr).trim().to_string();
+                let printed = print_expr_string(&interner, &expr).trim().to_string();
                 actual_output = format_errors(input_src, &printed, &errors)
                     .trim()
                     .to_string();

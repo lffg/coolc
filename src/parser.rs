@@ -1,36 +1,52 @@
 use crate::{
     ast::{
         BinaryOperator, Binding, CaseArm, Class, DispatchQualifier, Expr, ExprKind, Feature,
-        Formal, Ident, Program, TypeIdent, UnaryOperator,
+        Formal, Ident, Program, TypeName, UnaryOperator,
     },
     lexer::{self, extract},
     token::{Span, Spanned, Token, TokenKind},
+    util::intern::Interner,
 };
 
 type Result<T, E = ()> = std::result::Result<T, E>;
 
 pub type ParseResult<T> = Result<T, (T, Vec<Spanned<Error>>)>;
 
-pub fn parse_program(src: &str, tokens: &mut Vec<Token>) -> ParseResult<Program> {
-    parse(src, tokens, Parser::parse_program, Program::dummy)
+pub fn parse_program(
+    src: &str,
+    tokens: &mut Vec<Token>,
+    ident_interner: &mut Interner<str>,
+) -> ParseResult<Program> {
+    parse(
+        src,
+        tokens,
+        ident_interner,
+        Parser::parse_program,
+        Program::dummy,
+    )
 }
 
-pub fn parse_expr(src: &str, tokens: &mut Vec<Token>) -> ParseResult<Expr> {
+pub fn parse_expr(
+    src: &str,
+    tokens: &mut Vec<Token>,
+    ident_interner: &mut Interner<str>,
+) -> ParseResult<Expr> {
     let default = || Expr::dummy(Span::new_of_length(u32::try_from(src.len()).unwrap(), 0));
-    parse(src, tokens, Parser::parse_expr, default)
+    parse(src, tokens, ident_interner, Parser::parse_expr, default)
 }
 
-fn parse<'src, 'tok, T>(
+fn parse<'src, 'tok, 'ident, T>(
     src: &'src str,
     tokens: &'tok mut Vec<Token>,
-    f: impl for<'a> FnOnce(&'a mut Parser<'src, 'tok>) -> Result<T>,
+    ident_interner: &'ident mut Interner<str>,
+    f: impl for<'a> FnOnce(&'a mut Parser<'src, 'tok, 'ident>) -> Result<T>,
     default: impl FnOnce() -> T,
 ) -> ParseResult<T> {
     assert!(tokens.is_empty());
 
     // Lex and parse
     lexer::lex(src, tokens);
-    let mut p = Parser::new(src, tokens);
+    let mut p = Parser::new(src, tokens, ident_interner);
     let parse_result = f(&mut p);
 
     // Error handling
@@ -44,14 +60,15 @@ fn parse<'src, 'tok, T>(
     }
 }
 
-struct Parser<'src, 'tok> {
+struct Parser<'src, 'tok, 'ident> {
     src: &'src str,
     tokens: &'tok mut Vec<Token>,
+    ident_interner: &'ident mut Interner<str>,
     cursor: usize,
     errors: Vec<Spanned<Error>>,
 }
 
-impl Parser<'_, '_> {
+impl Parser<'_, '_, '_> {
     fn parse_program(&mut self) -> Result<Program> {
         let mut classes = Vec::with_capacity(4);
         while self.except([]) {
@@ -146,16 +163,15 @@ impl Parser<'_, '_> {
         Ok(Some(expr))
     }
 
-    fn parse_type(&mut self) -> Result<TypeIdent> {
-        self.parse_ident().map(TypeIdent)
+    fn parse_type(&mut self) -> Result<TypeName> {
+        self.parse_ident().map(TypeName)
     }
 
     fn parse_ident(&mut self) -> Result<Ident> {
-        let tok = self.consume(TokenKind::Identifier)?;
-        let ident = extract::ident(tok, self.src);
+        let token = self.consume(TokenKind::Identifier)?;
         Ok(Ident {
-            ident,
-            span: tok.span(),
+            name: self.ident_interner.intern(extract::ident(token, self.src)),
+            span: token.span(),
         })
     }
 
@@ -193,7 +209,7 @@ impl Parser<'_, '_> {
         let (kind, span) = match token.kind {
             TokenKind::Identifier => (
                 ExprKind::Id(Ident {
-                    ident: extract::ident(token, self.src),
+                    name: self.ident_interner.intern(extract::ident(token, self.src)),
                     span: token.span(),
                 }),
                 token.span(),
@@ -597,11 +613,16 @@ impl Parser<'_, '_> {
     }
 }
 
-impl Parser<'_, '_> {
-    pub fn new<'src, 'tok>(src: &'src str, tokens: &'tok mut Vec<Token>) -> Parser<'src, 'tok> {
+impl Parser<'_, '_, '_> {
+    pub fn new<'src, 'tok, 'ident>(
+        src: &'src str,
+        tokens: &'tok mut Vec<Token>,
+        ident_interner: &'ident mut Interner<str>,
+    ) -> Parser<'src, 'tok, 'ident> {
         let mut p = Parser {
             src,
             tokens,
+            ident_interner,
             cursor: 0,
             errors: Vec::new(),
         };
@@ -788,7 +809,8 @@ mod tests {
 
     #[test]
     fn test() {
-        let mut buf = Vec::new();
+        let mut tokens = Vec::new();
+        let mut ident_interner = Interner::with_capacity(0);
         let (ast, errors) = parse_expr(
             "\
 {
@@ -800,10 +822,11 @@ mod tests {
         3 + 4;
     };
 }",
-            &mut buf,
+            &mut tokens,
+            &mut ident_interner,
         )
         .unwrap_err();
-        println!("{}", print_expr_string(&ast));
-        println!("{:#?}", errors);
+        println!("{}", print_expr_string(&ident_interner, &ast));
+        println!("{errors:#?}");
     }
 }

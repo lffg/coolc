@@ -9,7 +9,7 @@ use std::{
 use cool::{
     parser,
     token::{Spanned, Token},
-    util::fmt::print_program,
+    util::{fmt::print_program, intern::Interner},
 };
 
 fn main() {
@@ -22,11 +22,12 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
     let mut tokens_buf = Vec::with_capacity(8 * 1024);
+    let mut ident_interner = Interner::with_capacity(1024);
 
     // File mode
     if let Some(prog_path) = args.next() {
         let input = fs::read_to_string(prog_path)?;
-        pipeline(&input, &mut tokens_buf);
+        pipeline(&input, &mut tokens_buf, &mut ident_interner);
         return Ok(());
     }
 
@@ -52,7 +53,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             if accumulated_input.trim().is_empty() {
                 println!("^D");
             } else {
-                pipeline(&accumulated_input, &mut tokens_buf);
+                pipeline(&accumulated_input, &mut tokens_buf, &mut ident_interner);
             }
             return Ok(());
         }
@@ -60,7 +61,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         // Empty line is another termination signal
         if current_line.trim().is_empty() {
             if !accumulated_input.trim().is_empty() {
-                pipeline(&accumulated_input, &mut tokens_buf);
+                pipeline(&accumulated_input, &mut tokens_buf, &mut ident_interner);
                 accumulated_input.clear(); // Clear for next input
             }
         } else {
@@ -69,18 +70,18 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn pipeline(src: &str, tokens: &mut Vec<Token>) {
+fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<str>) {
     tokens.clear();
 
-    match parser::parse_program(src, tokens) {
+    match parser::parse_program(src, tokens, ident_interner) {
         Ok(prog) => {
-            print_program(&mut io::stdout(), &prog).unwrap();
+            print_program(&mut io::stdout(), ident_interner, &prog).unwrap();
         }
         Err((prog, errors)) => {
             eprintln!("Got {} errors", errors.len());
             eprintln!();
             eprintln!("Partial AST:");
-            print_program(&mut io::stdout(), &prog).unwrap();
+            print_program(&mut io::stdout(), ident_interner, &prog).unwrap();
             eprintln!();
             for error in errors {
                 report_error(src, &error);

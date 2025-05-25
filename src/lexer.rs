@@ -272,9 +272,9 @@ pub mod extract {
         token.span().substr(src).parse()
     }
 
-    pub fn ident(token: Token, src: &str) -> Box<str> {
+    pub fn ident(token: Token, src: &str) -> &str {
         debug_assert_eq!(token.kind, TokenKind::Identifier);
-        token.span().substr(src).to_string().into_boxed_str()
+        token.span().substr(src)
     }
 
     pub fn string(token: Token, src: &str) -> Box<str> {

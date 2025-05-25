@@ -11,9 +11,17 @@ impl<T: ?Sized> Copy for Interned<T> {}
 
 impl<T: ?Sized> Clone for Interned<T> {
     fn clone(&self) -> Self {
-        Self::new(self.handle)
+        *self
     }
 }
+
+impl<T: ?Sized> PartialEq for Interned<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.handle == other.handle
+    }
+}
+
+impl<T: ?Sized> Eq for Interned<T> {}
 
 impl<T: ?Sized> fmt::Debug for Interned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -43,6 +51,11 @@ impl<T: ?Sized> Interner<T> {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.vec.clear();
+    }
+
     /// Interns the provided value, returning a handle which can be used to
     /// retrieve it later.
     pub fn intern(&mut self, value: &T) -> Interned<T>
@@ -63,8 +76,8 @@ impl<T: ?Sized> Interner<T> {
 
     /// Returns the corresponding value for the provided [`Interned`] handle.
     /// Panics if not found.
-    pub fn get(&self, handle: Interned<T>) -> &T {
-        let handle = handle.handle as usize;
+    pub fn get(&self, handle: impl Into<Interned<T>>) -> &T {
+        let handle = handle.into().handle as usize;
         &self.vec[handle]
     }
 }
