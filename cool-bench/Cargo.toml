@@ -7,6 +7,10 @@ edition.workspace = true
 name = "lexer"
 harness = false
 
+[[bench]]
+name = "parser"
+harness = false
+
 [dependencies]
 cool.workspace = true
 
