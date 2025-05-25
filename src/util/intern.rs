@@ -15,6 +15,12 @@ impl<T: ?Sized> Clone for Interned<T> {
     }
 }
 
+impl<T: ?Sized> Hash for Interned<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.handle.hash(state);
+    }
+}
+
 impl<T: ?Sized> PartialEq for Interned<T> {
     fn eq(&self, other: &Self) -> bool {
         self.handle == other.handle
