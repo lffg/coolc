@@ -5,7 +5,7 @@ use crate::{
     },
     lexer::{self, extract},
     token::{Span, Spanned, Token, TokenKind},
-    types::builtins,
+    types::{builtins, well_known},
     util::intern::Interner,
 };
 
@@ -46,8 +46,12 @@ fn parse<'src, 'tok, 'ident, T>(
     assert!(tokens.is_empty());
     assert!(ident_interner.is_empty());
 
-    // Register built-in names
+    // Register builtin and well-known names
     for &(expected_handle, name, _) in builtins::ALL {
+        let handle = ident_interner.intern(name);
+        assert_eq!(handle, expected_handle);
+    }
+    for &(expected_handle, name) in well_known::ALL {
         let handle = ident_interner.intern(name);
         assert_eq!(handle, expected_handle);
     }

@@ -144,8 +144,10 @@ struct TypeInner {
     parent: Option<Type>,
 }
 
+/// Built-in types, which are always implicitly interned **and** defined.
+///
+/// See also [`well_known`].
 pub mod builtins {
-
     use crate::{token::Span, util::intern::Interned};
 
     pub const SPAN: Span = Span::new_of_length(0, 0);
@@ -178,9 +180,31 @@ pub mod builtins {
         (IO, IO_NAME, Some(OBJECT)),
     ];
 
-    const fn interned(n: u32) -> Interned<str> {
+    pub(super) const fn interned(n: u32) -> Interned<str> {
         Interned::unchecked_new(std::num::NonZeroU32::new(n).unwrap())
     }
+}
+
+/// Well known names, which are always implicitly interned.
+///
+/// See also [`builtins`].
+pub mod well_known {
+    use crate::util::intern::Interned;
+
+    pub const MAIN: Interned<str> = super::builtins::interned(7);
+    pub const MAIN_NAME: &str = "Main";
+
+    pub const MAIN_METHOD: Interned<str> = super::builtins::interned(8);
+    pub const MAIN_METHOD_NAME: &str = "Main";
+
+    pub const SELF: Interned<str> = super::builtins::interned(9);
+    pub const SELF_NAME: &str = "self";
+
+    pub const ALL: &[(Interned<str>, &str)] = &[
+        (MAIN, MAIN_NAME),
+        (MAIN_METHOD, MAIN_METHOD_NAME),
+        (SELF, SELF_NAME),
+    ];
 }
 
 #[cfg(test)]
