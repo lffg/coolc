@@ -325,7 +325,7 @@ mod tests {
         let root_a = define(i, reg, "root_a", None);
         let root_b = define(i, reg, "root_b", None);
 
-        root_a.lub(&root_b); // panics
+        _ = root_a.lub(&root_b); // panics
     }
 
     fn define(

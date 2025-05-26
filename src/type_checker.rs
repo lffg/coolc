@@ -107,7 +107,19 @@ impl Checker {
                 predicate,
                 then_arm,
                 else_arm,
-            } => todo!(),
+            } => {
+                let predicate = self.check_expr(*predicate);
+                self.assert_is_type(&predicate.ty, builtins::BOOL, predicate.span);
+                let then_arm = self.check_expr(*then_arm);
+                let else_arm = self.check_expr(*else_arm);
+                let lub = then_arm.ty.lub(&else_arm.ty);
+                let kind = ExprKind::Conditional {
+                    predicate: Box::new(predicate),
+                    then_arm: Box::new(then_arm),
+                    else_arm: Box::new(else_arm),
+                };
+                (kind, lub)
+            }
             ExprKind::While { predicate, body } => todo!(),
             ExprKind::Block { body } => todo!(),
             ExprKind::Let { bindings, body } => {
@@ -272,11 +284,23 @@ impl Checker {
 
     /// Asserts that `a` is a subtype of `b`. If not, registers a new error
     /// (variant [`Error::Unassignable`]) with the provided span.
-    fn assert_subtype(&mut self, a: &Type, b: &Type, span: Span) {
+    fn assert_is_subtype(&mut self, a: &Type, b: &Type, span: Span) {
         if !a.is_subtype_of(b) {
             self.errors.push(span.wrap(Error::Unassignable {
                 dst: b.name(),
                 src: a.name(),
+            }));
+        }
+    }
+
+    /// Asserts that both types are equal.
+    ///
+    /// See also [`Self::assert_is_subtype`].
+    fn assert_is_type(&mut self, actual: &Type, expected: Interned<str>, span: Span) {
+        if actual.name() != expected {
+            self.errors.push(span.wrap(Error::Mismatch {
+                actual: actual.name(),
+                expected,
             }));
         }
     }
@@ -363,7 +387,7 @@ impl Checker {
                     name: binding.name,
                     initializer: binding.initializer.map(|i| {
                         let expr = self.check_expr(i);
-                        self.assert_subtype(&expr.ty, &ty, expr.span);
+                        self.assert_is_subtype(&expr.ty, &ty, expr.span);
                         expr
                     }),
                     ty,
@@ -385,6 +409,10 @@ pub enum Error {
     Unassignable {
         dst: Interned<str>,
         src: Interned<str>,
+    },
+    Mismatch {
+        actual: Interned<str>,
+        expected: Interned<str>,
     },
 }
 
@@ -435,7 +463,7 @@ mod tests {
             let tree_ok = r#"string "hello!" (1..9 %: String)"#;
         }
 
-        fn let_ok() {
+        fn test_let_ok() {
             let expr = "let a : Bool <- true in a";
             let tree_ok = "
                 let (0..25 %: Bool)
@@ -446,9 +474,34 @@ mod tests {
             ";
         }
 
-        fn let_error() {
+        fn test_let_error() {
             let expr = "let a : Bool <- 0 in a";
             let expected_errors = &["16..17: type Int is not assignable to type Bool"];
+        }
+
+        fn test_if_same_type() {
+            let expr = "if true then 1 else 2 fi";
+            let tree_ok = "
+                conditional (0..24 %: Int)
+                  bool true (3..7 %: Bool)
+                  int 1 (13..14 %: Int)
+                  int 2 (20..21 %: Int)
+            ";
+        }
+
+        fn test_if_lub() {
+            let expr = "if true then 1 else true fi";
+            let tree_ok = "
+                conditional (0..27 %: Object)
+                  bool true (3..7 %: Bool)
+                  int 1 (13..14 %: Int)
+                  bool true (20..24 %: Bool)
+            ";
+        }
+
+        fn test_if_fails_with_wrong_predicate_type() {
+            let expr = r#"if 1 then false else false fi"#;
+            let expected_errors = &["3..4: expected type Bool, but got Int"];
         }
     );
 
@@ -606,6 +659,11 @@ mod tests {
                 let dst = i.get(dst);
                 let src = i.get(src);
                 format!("{span}: type {src} is not assignable to type {dst}")
+            }
+            Error::Mismatch { actual, expected } => {
+                let actual = i.get(actual);
+                let expected = i.get(expected);
+                format!("{span}: expected type {expected}, but got {actual}")
             }
         }
     }
