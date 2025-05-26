@@ -55,6 +55,32 @@ developed for this compiler, which is in the `scripts/tester` directory.
 
 # Implementation Remarks
 
+## Type checker
+
+Basically runs through the AST in a top-down fashion to register types, scopes,
+etc. Then bottom-up to propagate types from inner expressions to outer
+expressions.
+
+Different passes are required:
+
+1. Collect all class definitions and their parent classes
+2. Build the full inheritance, which forms a DAG
+3. Collect all method definitions (to construct the "method environment")
+4. Type check expressions and build the typed AST
+
+The "typed AST" is a simple generalization of the AST constructed for the parser
+assignment. A typed AST is essentially an AST, but every node which contained a
+`TypeIdent` now contains a fully-resolved `Type`. To do this, every AST node is
+now parameterized over a generic type `T`. For the untyped AST, `T` is
+`TypeIdent`; for the typed AST, `T` is `Type`.
+
+A `Type` is essentially an unique type identifier (the corresponding [interned]
+identifier's handle), its parent `Type` and the `Span` for the type definition.
+More information (such as the size of the type) could be added later when code
+generation is implemented.
+
+[interned]: https://en.wikipedia.org/wiki/String_interning
+
 ## Parser
 
 Following the lexical analyzer's design, this compiler's Parser is also
