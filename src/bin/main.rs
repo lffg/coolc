@@ -9,6 +9,7 @@ use std::{
 use cool::{
     parser,
     token::{Spanned, Token},
+    type_checker,
     util::{fmt::print_program, intern::Interner},
 };
 
@@ -73,10 +74,8 @@ fn run() -> Result<(), Box<dyn Error>> {
 fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<str>) {
     tokens.clear();
 
-    match parser::parse_program(src, tokens, ident_interner) {
-        Ok(prog) => {
-            print_program(&mut io::stdout(), ident_interner, &prog).unwrap();
-        }
+    let prog = match parser::parse_program(src, tokens, ident_interner) {
+        Ok(prog) => prog,
         Err((prog, errors)) => {
             eprintln!("Got {} errors", errors.len());
             eprintln!();
@@ -86,14 +85,29 @@ fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<st
             for error in errors {
                 report_error(src, &error);
             }
+            return;
         }
-    }
+    };
+
+    println!("=== Untyped AST ===");
+    print_program(&mut io::stdout(), ident_interner, &prog).unwrap();
+
+    let checker = type_checker::Checker::with_capacity(512);
+    #[expect(clippy::manual_let_else)]
+    let (typed_prog, _registry) = match checker.check(prog) {
+        Ok(prog) => prog,
+        Err(_) => todo!(),
+    };
+
+    println!();
+    println!("=== Typed AST ===");
+    print_program(&mut io::stdout(), ident_interner, &typed_prog).unwrap();
 }
 
 // Helper function to report errors with context
-fn report_error(src: &str, error: &Spanned<parser::Error>) {
+fn report_error<T: std::fmt::Debug>(src: &str, error: &Spanned<T>) {
     let span = error.span;
-    let error = error.inner.clone();
+    let error = &error.inner;
 
     // Try to find line number and column
     let mut line = 1;

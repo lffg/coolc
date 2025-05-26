@@ -136,6 +136,12 @@ impl From<Type> for Interned<str> {
     }
 }
 
+impl From<&Type> for Interned<str> {
+    fn from(value: &Type) -> Self {
+        value.name()
+    }
+}
+
 #[derive(Debug)]
 struct TypeInner {
     name: Interned<str>,
@@ -195,7 +201,7 @@ pub mod well_known {
     pub const MAIN_NAME: &str = "Main";
 
     pub const MAIN_METHOD: Interned<str> = super::builtins::interned(8);
-    pub const MAIN_METHOD_NAME: &str = "Main";
+    pub const MAIN_METHOD_NAME: &str = "main";
 
     pub const SELF: Interned<str> = super::builtins::interned(9);
     pub const SELF_NAME: &str = "self";

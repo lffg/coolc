@@ -28,7 +28,12 @@ impl Checker {
         }
     }
 
-    pub fn check(mut self, program: Program) -> (Program<Type>, TypeRegistry) {
+    #[expect(clippy::type_complexity)]
+    pub fn check(
+        mut self,
+        program: Program,
+    ) -> Result<(Program<Type>, TypeRegistry), (Program<Type>, TypeRegistry, Vec<Spanned<Error>>)>
+    {
         self.build_type_registry(&program);
         self.build_methods_env(&program);
 
@@ -37,8 +42,13 @@ impl Checker {
             .into_iter()
             .map(|class| self.check_class(class))
             .collect();
+        let program = Program { classes };
 
-        (Program { classes }, self.registry)
+        if self.errors.is_empty() {
+            Ok((program, self.registry))
+        } else {
+            Err((program, self.registry, self.errors))
+        }
     }
 
     fn check_class(&mut self, class: ast::Class) -> ast::Class<Type> {
