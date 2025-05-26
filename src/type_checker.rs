@@ -60,6 +60,7 @@ impl Checker {
                     other_definition_span: other_span,
                 };
                 self.errors.push(current_span.wrap(error));
+                continue;
             }
 
             // If the source doesn't define a parent class, object is implied.
@@ -171,6 +172,28 @@ mod tests {
             "
             class Entity {};
             class Entity {};
+
+            class Object {};
+            ",
+        );
+        let mut checker = Checker::with_capacity(16);
+        checker.build_type_registry(&prog);
+        assert_eq!(checker.errors.len(), 2);
+        assert_eq!(
+            pp(&i, &checker.errors[0]),
+            "48..54: Entity already defined at 19..25"
+        );
+        assert_eq!(
+            pp(&i, &checker.errors[1]),
+            "78..84: Object already defined at 0..0"
+        );
+    }
+
+    #[test]
+    fn test_build_type_registry_fails_with_undefined_type() {
+        let (i, prog) = parse_program(
+            "
+            class Entity inherits UndefinedClass {};
             ",
         );
         let mut checker = Checker::with_capacity(16);
@@ -178,7 +201,7 @@ mod tests {
         assert_eq!(checker.errors.len(), 1);
         assert_eq!(
             pp(&i, &checker.errors[0]),
-            "48..54: Entity already defined at 19..25"
+            "35..49: UndefinedClass is not defined"
         );
     }
 
