@@ -258,3 +258,44 @@ impl From<&Ident> for Interned<str> {
         value.name
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_utils {
+    use crate::types::well_known;
+
+    use super::*;
+
+    pub fn from_expr_to_main_program(expr: Expr<TypeName>) -> Program<TypeName> {
+        Program {
+            classes: vec![Class {
+                name: TypeName::new(well_known::MAIN, builtins::SPAN),
+                inherits: None,
+                features: vec![Feature::Method(Method {
+                    name: Ident {
+                        name: well_known::MAIN_METHOD,
+                        span: builtins::SPAN,
+                    },
+                    formals: vec![],
+                    return_ty: TypeName::new(builtins::OBJECT, builtins::SPAN),
+                    body: expr,
+                })],
+            }],
+        }
+    }
+
+    pub fn from_main_program_to_expr<T>(mut prog: Program<T>) -> Expr<T>
+    where
+        T: Into<Interned<str>>,
+    {
+        assert_eq!(prog.classes.len(), 1);
+        let mut class = prog.classes.remove(0);
+        let name: Interned<str> = class.name.into();
+        assert_eq!(name, well_known::MAIN);
+        assert_eq!(class.features.len(), 1);
+        let Feature::Method(method) = class.features.remove(0) else {
+            panic!()
+        };
+        assert_eq!(method.name.name, well_known::MAIN_METHOD);
+        method.body
+    }
+}

@@ -408,12 +408,49 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::{
-        ast::Program,
-        parser,
+        parser::test_utils::parse_program,
         token::Spanned,
-        type_checker::{Checker, Error, MethodsEnv},
+        type_checker::{test_utils::typing_tests, Checker, Error, MethodsEnv},
         util::intern::Interner,
     };
+
+    typing_tests!(
+        fn test_int() {
+            let expr = "1";
+            let tree_ok = "int 1 (0..1 %: Int)";
+        }
+
+        fn test_true() {
+            let expr = "true";
+            let tree_ok = "bool true (0..4 %: Bool)";
+        }
+
+        fn test_false() {
+            let expr = "false";
+            let tree_ok = "bool false (0..5 %: Bool)";
+        }
+
+        fn test_string() {
+            let expr = r#" "hello!" "#;
+            let tree_ok = r#"string "hello!" (1..9 %: String)"#;
+        }
+
+        fn let_ok() {
+            let expr = "let a : Bool <- true in a";
+            let tree_ok = "
+                let (0..25 %: Bool)
+                  binding a: Bool (initialized)
+                    bool true (16..20 %: Bool)
+                  in
+                    ident a (24..25 %: Bool)
+            ";
+        }
+
+        fn let_error() {
+            let expr = "let a : Bool <- 0 in a";
+            let expected_errors = &["16..17: type Int is not assignable to type Bool"];
+        }
+    );
 
     #[test]
     fn test_build_type_registry() {
@@ -542,13 +579,6 @@ mod tests {
         );
     }
 
-    fn parse_program(src: &str) -> (Interner<str>, Program) {
-        let mut i = Interner::with_capacity(32);
-        let prog = parser::parse_program(src, &mut Vec::with_capacity(512), &mut i)
-            .expect("failed to parse");
-        (i, prog)
-    }
-
     fn assert_errors(i: &Interner<str>, actual: &[Spanned<Error>], expected: &[&str]) {
         let errors: Vec<_> = actual.iter().map(|e| fmt_error(i, e)).collect();
         assert_eq!(errors, expected);
@@ -598,4 +628,126 @@ mod tests {
             })
             .collect()
     }
+}
+
+#[cfg(test)]
+pub mod test_utils {
+    macro_rules! typing_tests {
+        (
+            $(
+                fn $test_name:ident() {
+                    let $kind:ident = $source:expr;
+                    $($assertions_tt:tt)*
+                }
+            )*
+        ) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    let (interner, untyped_ast) = typing_tests!(@@get_ast($kind), $source);
+                    let checker = crate::type_checker::Checker::with_capacity(32);
+                    let check_result = typing_tests!(@@check($kind), checker, untyped_ast);
+                    let (typed_ast, _registry, errors) = match check_result {
+                        Ok((typed_ast, registry)) => (typed_ast, registry, vec![]),
+                        Err((typed_ast, registry, errors)) => (typed_ast, registry, errors),
+                    };
+
+                    let typed_ast = typing_tests!(@@cast_ast($kind), typed_ast);
+                    let ctx = &(interner, typed_ast, errors);
+                    typing_tests!(
+                        @@expand_assertions($kind),
+                        ctx,
+                        [$($assertions_tt)*]
+                    );
+                }
+            )*
+        };
+
+        (@@expand_assertions($kind:ident), $ctx:expr, []) => {};
+        (
+            @@expand_assertions($kind:ident), $ctx:expr,
+            [
+                let $assertion:ident = $assertion_expected:expr;
+                $($rest_assertions_tt:tt)*
+            ]
+        ) => {
+            {
+                typing_tests!(
+                    @@assertion($kind, $assertion),
+                    $ctx,
+                    $assertion_expected
+                );
+            }
+            typing_tests!(
+                @@expand_assertions($kind),
+                $ctx,
+                [$($rest_assertions_tt)*]
+            );
+        };
+
+        (@@assertion($kind:ident, expected_errors), $ctx:expr, $expected:expr) => {
+            let (i, _typed_ast, actual_errors) = $ctx;
+            let errors: Vec<_> = actual_errors.iter().map(|e| fmt_error(&i, e)).collect();
+            ::pretty_assertions::assert_eq!(errors, $expected);
+        };
+        (@@assertion($kind:ident, tree_ok), $ctx:expr, $expected:expr) => {
+            let expected = ::indoc::indoc! { $expected }.trim();
+            let (i, typed_ast, actual_errors) = $ctx;
+            let tree_str = typing_tests!(@@print_ast($kind), i, typed_ast);
+            assert_eq!(actual_errors.len(), 0);
+            ::pretty_assertions::assert_eq!(tree_str.trim(), expected);
+        };
+        (@@assertion($kind:ident, tree_with_error), $ctx:expr, $expected:expr) => {
+            let expected = ::indoc::indoc! { $expected }.trim();
+            let (i, typed_ast, _actual_errors) = $ctx;
+            let tree_str = typing_tests!(@@print_ast($kind), i, typed_ast);
+            ::pretty_assertions::assert_eq!(tree_str.trim(), expected);
+        };
+        (@@assertion($kind:ident, $assertion:ident), $ctx:expr, $expected:expr) => {
+            compile_error!(concat!(
+                "assertion '",
+                stringify!($assertion),
+                "' is not implemented for kind '",
+                stringify!($kind),
+                "'",
+            ));
+        };
+
+        (@@get_ast(expr), $source:expr) => {
+            crate::parser::test_utils::parse_expr($source)
+        };
+        (@@get_ast(program), $source:expr) => {
+            crate::parser::test_utils::parse_program($source)
+        };
+        (@@get_ast($kind:ident), $source:expr) => {
+            compile_error!(concat!(
+                "can only use mode 'expr' or 'program' as source input. got '",
+                stringify!($kind),
+                "' instead",
+            ));
+        };
+
+        (@@check(expr), $checker:expr, $ast:expr) => {{
+            let prog = crate::ast::test_utils::from_expr_to_main_program($ast);
+            $checker.check(prog)
+        }};
+        (@@check(program), $checker:expr, $ast:expr) => {
+            $checker.check($ast)
+        };
+
+        (@@cast_ast(expr), $ast:expr) => {
+            crate::ast::test_utils::from_main_program_to_expr($ast)
+        };
+        (@@cast_ast(program), $ast:expr) => {
+            $ast
+        };
+
+        (@@print_ast(expr), $interner:expr, $ast:expr) => {
+            crate::util::fmt::print_expr_string($interner, $ast)
+        };
+        (@@print_ast(program), $interner:expr, $ast:expr) => {
+            crate::util::fmt::print_program_string($interner, $ast)
+        };
+    }
+    pub(crate) use typing_tests;
 }

@@ -243,7 +243,7 @@ where
             writeln!(w, "int {val} ({span}{ty})")?;
         }
         ExprKind::String(val) => {
-            writeln!(w, "string {val:?}")?;
+            writeln!(w, "string {val:?} ({span}{ty})")?;
         }
         ExprKind::Bool(val) => {
             writeln!(w, "bool {val} ({span}{ty})")?;

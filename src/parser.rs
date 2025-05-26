@@ -822,6 +822,25 @@ impl From<std::num::ParseIntError> for Error {
 }
 
 #[cfg(test)]
+pub(crate) mod test_utils {
+    use super::*;
+
+    pub fn parse_program(src: &str) -> (Interner<str>, Program) {
+        let mut i = Interner::with_capacity(32);
+        let prog = super::parse_program(src, &mut Vec::with_capacity(512), &mut i)
+            .expect("failed to parse");
+        (i, prog)
+    }
+
+    pub fn parse_expr(src: &str) -> (Interner<str>, Expr) {
+        let mut i = Interner::with_capacity(32);
+        let prog =
+            super::parse_expr(src, &mut Vec::with_capacity(512), &mut i).expect("failed to parse");
+        (i, prog)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use crate::util::fmt::print_expr_string;
 

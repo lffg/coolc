@@ -9,6 +9,7 @@ version = "0.0.1"
 [workspace.dependencies]
 cool.path = "."
 criterion = "0.5.1"
+indoc = "2.0.6"
 phf = { version = "0.11.3", features = ["macros"] }
 pretty_assertions = "1.4.1"
 
@@ -33,6 +34,7 @@ edition.workspace = true
 phf.workspace = true
 
 [dev-dependencies]
+indoc.workspace = true
 pretty_assertions.workspace = true
 
 [lints]
