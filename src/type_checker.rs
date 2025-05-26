@@ -1,18 +1,17 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{Program, TypeName},
+    ast::{Feature, Formal, MethodSignature, Program, TypeName},
     token::{Span, Spanned},
     types::{builtins, Type, TypeRegistry},
     util::intern::Interned,
 };
 
-type Result<T, E = ()> = std::result::Result<T, E>;
-
 pub type ParseResult<T> = Result<T, (T, Vec<Spanned<Error>>)>;
 
 pub struct Checker {
     registry: TypeRegistry,
+    methods: MethodsEnv,
     errors: Vec<Spanned<Error>>,
 }
 
@@ -20,14 +19,63 @@ impl Checker {
     pub fn with_capacity(capacity: usize) -> Checker {
         Checker {
             registry: TypeRegistry::with_capacity(capacity),
+            methods: HashMap::with_capacity(/* will be built in-place */ 0),
             errors: Vec::with_capacity(8),
         }
     }
 
-    pub fn check(mut self, program: &Program) -> (Program<Type>, TypeRegistry) {
-        self.build_type_registry(program);
+    /// Returns the corresponding type that should be in the type registry.
+    ///
+    /// If type is not present, returns [`builtins::NO_TYPE`] and records an
+    /// error at the provided span.
+    pub fn get_type(&mut self, ty: TypeName) -> Type {
+        self.registry.get(ty.name()).unwrap_or_else(|| {
+            self.errors
+                .push(ty.span().wrap(Error::UndefinedType(ty.name())));
+            self.registry.get(builtins::NO_TYPE).unwrap()
+        })
+    }
+
+    pub fn check(mut self, program: Program) -> (Program<Type>, TypeRegistry) {
+        self.build_type_registry(&program);
+        self.build_methods_env(&program);
 
         (Program::default(), self.registry)
+    }
+
+    pub fn build_methods_env(&mut self, program: &Program) {
+        self.methods = program
+            .classes
+            .iter()
+            .flat_map(|class| {
+                class.features.iter().filter_map(move |feature| {
+                    if let Feature::Method(method) = feature {
+                        Some((class, method))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .map(|(class, method)| {
+                let key = MethodKey {
+                    class: self.get_type(class.name),
+                    name: method.name.name,
+                };
+                let signature = MethodSignature {
+                    name: method.name,
+                    formals: method
+                        .formals
+                        .iter()
+                        .map(|f| Formal {
+                            name: f.name,
+                            ty: self.get_type(f.ty),
+                        })
+                        .collect(),
+                    return_ty: self.get_type(method.return_ty),
+                };
+                (key, signature)
+            })
+            .collect();
     }
 
     /// Scans through the program's source and records all classes in the
@@ -112,8 +160,6 @@ impl Checker {
     }
 }
 
-type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
-
 #[derive(Copy, Clone, Debug)]
 pub enum Error {
     DuplicateTypeDefinition {
@@ -121,6 +167,18 @@ pub enum Error {
         other_definition_span: Span,
     },
     UndefinedType(Interned<str>),
+}
+
+type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
+
+type MethodsEnv = HashMap<MethodKey, MethodSignature<Type>>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MethodKey {
+    /// Class in which the method is defined.
+    pub class: Type,
+    /// Method name.
+    pub name: Interned<str>,
 }
 
 #[cfg(test)]
@@ -132,7 +190,7 @@ mod tests {
         ast::Program,
         parser,
         token::Spanned,
-        type_checker::{Checker, Error},
+        type_checker::{Checker, Error, MethodsEnv},
         util::intern::Interner,
     };
 
@@ -205,6 +263,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_build_methods_env() {
+        let (i, prog) = parse_program(
+            "
+            class A {
+                a1(a1p1 : String, a1p2 : String) : Int { 0 };
+                a2(a2p1 : String) : Int { 0 };
+                a3() : Int { 0 };
+                a4() : Int { 0 };
+            };
+            class B {
+                b1() : Int { 0 };
+            };
+            ",
+        );
+        let mut checker = Checker::with_capacity(16);
+        checker.build_type_registry(&prog);
+        checker.build_methods_env(&prog);
+        assert!(checker.errors.is_empty());
+        assert_eq!(
+            pp_methods(&i, &checker.methods),
+            BTreeMap::from([
+                (
+                    ("A", "a1"),
+                    vec![("a1p1", "String"), ("a1p2", "String"), ("<ret>", "Int")],
+                ),
+                (("A", "a2"), vec![("a2p1", "String"), ("<ret>", "Int")]),
+                (("A", "a3"), vec![("<ret>", "Int")]),
+                (("A", "a4"), vec![("<ret>", "Int")]),
+                (("B", "b1"), vec![("<ret>", "Int")]),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_build_methods_env_fails_upon_undefined_types() {
+        let (i, prog) = parse_program(
+            "
+            class A {
+                a1(a1p1 : String, a1p2 : Undefined1) : Int { 0 };
+                a2(a2p1 : Undefined2) : Int { 0 };
+                a3() : Undefined3 { 0 };
+            };
+            ",
+        );
+        let mut checker = Checker::with_capacity(16);
+        checker.build_type_registry(&prog);
+        checker.build_methods_env(&prog);
+        assert_eq!(checker.errors.len(), 3);
+        assert_eq!(
+            pp(&i, &checker.errors[0]),
+            "64..74: Undefined1 is not defined"
+        );
+        assert_eq!(
+            pp(&i, &checker.errors[1]),
+            "115..125: Undefined2 is not defined"
+        );
+        assert_eq!(
+            pp(&i, &checker.errors[2]),
+            "163..173: Undefined3 is not defined"
+        );
+    }
+
     fn parse_program(src: &str) -> (Interner<str>, Program) {
         let mut i = Interner::with_capacity(32);
         let prog = parser::parse_program(src, &mut Vec::with_capacity(512), &mut i)
@@ -227,5 +348,24 @@ mod tests {
                 format!("{span}: {name} is not defined")
             }
         }
+    }
+
+    fn pp_methods<'i>(
+        i: &'i Interner<str>,
+        methods: &MethodsEnv,
+    ) -> BTreeMap<(&'i str, &'i str), Vec<(&'i str, &'i str)>> {
+        methods
+            .iter()
+            .map(|(k, v)| {
+                let k = (i.get(k.class.name()), i.get(k.name));
+                let v = v
+                    .formals
+                    .iter()
+                    .map(|f| (i.get(f.name), i.get(f.ty.name())))
+                    .chain([("<ret>", i.get(v.return_ty.name()))])
+                    .collect();
+                (k, v)
+            })
+            .collect()
     }
 }

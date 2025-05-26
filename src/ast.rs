@@ -81,6 +81,22 @@ pub struct Method<T = TypeName> {
     pub body: Expr<T>,
 }
 
+pub struct MethodSignature<T> {
+    pub name: Ident,
+    pub formals: Vec<Formal<T>>,
+    pub return_ty: T,
+}
+
+impl<T> From<Method<T>> for MethodSignature<T> {
+    fn from(method: Method<T>) -> Self {
+        MethodSignature {
+            name: method.name,
+            formals: method.formals,
+            return_ty: method.return_ty,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Formal<T = TypeName> {
     pub name: Ident,
