@@ -269,6 +269,17 @@ impl Checker {
     fn get_current_class(&self) -> Type {
         self.must_get_type(self.current_class)
     }
+
+    /// Asserts that `a` is a subtype of `b`. If not, registers a new error
+    /// (variant [`Error::Unassignable`]) with the provided span.
+    fn assert_subtype(&mut self, a: &Type, b: &Type, span: Span) {
+        if !a.is_subtype_of(b) {
+            self.errors.push(span.wrap(Error::Unassignable {
+                dst: b.name(),
+                src: a.name(),
+            }));
+        }
+    }
 }
 
 // Utility functions
@@ -350,8 +361,12 @@ impl Checker {
                 scope.insert(binding.name.name, ty.clone());
                 ast::Binding {
                     name: binding.name,
+                    initializer: binding.initializer.map(|i| {
+                        let expr = self.check_expr(i);
+                        self.assert_subtype(&expr.ty, &ty, expr.span);
+                        expr
+                    }),
                     ty,
-                    initializer: binding.initializer.map(|i| self.check_expr(i)),
                 }
             })
             .collect();
@@ -367,6 +382,10 @@ pub enum Error {
     },
     UndefinedType(Interned<str>),
     UndefinedName(Interned<str>),
+    Unassignable {
+        dst: Interned<str>,
+        src: Interned<str>,
+    },
 }
 
 type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
@@ -552,6 +571,11 @@ mod tests {
             Error::UndefinedName(name) => {
                 let name = i.get(name);
                 format!("{span}: {name} is not defined")
+            }
+            Error::Unassignable { dst, src } => {
+                let dst = i.get(dst);
+                let src = i.get(src);
+                format!("{span}: type {src} is not assignable to type {dst}")
             }
         }
     }

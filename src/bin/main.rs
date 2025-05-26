@@ -93,10 +93,15 @@ fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<st
     print_program(&mut io::stdout(), ident_interner, &prog).unwrap();
 
     let checker = type_checker::Checker::with_capacity(512);
-    #[expect(clippy::manual_let_else)]
     let (typed_prog, _registry) = match checker.check(prog) {
         Ok(prog) => prog,
-        Err(_) => todo!(),
+        Err((_prog, _registry, errors)) => {
+            eprintln!("Got {} type errors", errors.len());
+            for error in errors {
+                report_error(src, &error);
+            }
+            return;
+        }
     };
 
     println!();
