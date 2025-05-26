@@ -45,6 +45,12 @@ impl<T: ?Sized> fmt::Debug for Interned<T> {
     }
 }
 
+impl<T: ?Sized> From<&Interned<T>> for Interned<T> {
+    fn from(value: &Interned<T>) -> Self {
+        *value
+    }
+}
+
 pub struct Interner<T: ?Sized> {
     map: HashMap<Rc<T>, NonZeroU32>,
     vec: Vec<Rc<T>>,

@@ -33,17 +33,18 @@ impl Checker {
     /// Scans through the program's source and records all classes in the
     /// `registry` field.
     fn build_type_registry(&mut self, program: &Program) {
+        const OBJECT: TypeName = TypeName::new(builtins::OBJECT, builtins::SPAN);
+
         // Maps a class name to its definition span and parent class, if any.
-        let mut map: HashMap<Interned<str>, (Span, Option<TypeName>)> =
-            HashMap::with_capacity(self.registry.capacity());
+        let mut discovered = DiscoveredClasses::with_capacity(self.registry.capacity());
 
         // Define built-ins.
         //
         // This will also help preventing built-in redefinition due to the
         // check in the next section.
-        for &(handle, _, parent_handle) in builtins::ALL {
-            let parent_name = parent_handle.map(|name| TypeName::new(name, builtins::SPAN));
-            map.insert(handle, (builtins::SPAN, parent_name));
+        for &(ty, _, parent) in builtins::ALL {
+            let parent = parent.map(|name| TypeName::new(name, builtins::SPAN));
+            discovered.insert(ty, (builtins::SPAN, parent));
         }
 
         // Build the map from the source and report any duplicate type
@@ -52,8 +53,8 @@ impl Checker {
             let class_name = Interned::from(class.name);
             let current_span = class.name.span();
 
-            if map.contains_key(&class_name) {
-                let (other_span, _) = map[&class_name];
+            if discovered.contains_key(&class_name) {
+                let (other_span, _) = discovered[&class_name];
                 let error = Error::DuplicateTypeDefinition {
                     name: class_name,
                     other_definition_span: other_span,
@@ -61,25 +62,28 @@ impl Checker {
                 self.errors.push(current_span.wrap(error));
             }
 
-            let val = (current_span, class.inherits);
-            map.insert(class.name.into(), val);
+            // If the source doesn't define a parent class, object is implied.
+            //
+            // Notice that we do NOT want to make this default below (when
+            // calling `self.define_class()`). Otherwise, `<no-type>`'s parent
+            // would be `Some(Object)` instead of `None` and such implicit
+            // built-in inheritance relationships wouldn't be persisted in the
+            // `discovered` map, which is itself used in `define_class()`.
+            // Yes, this was an excruciating bug.
+            let val = (current_span, Some(class.inherits.unwrap_or(OBJECT)));
+            discovered.insert(class.name.into(), val);
         }
 
-        // Declare all types.
-        for (class_name, (definition_span, parent_class)) in &map {
-            self.define_class(&map, *class_name, *definition_span, {
-                // If the source doesn't define a parent class, object is
-                // implied.
-                const OBJECT: TypeName = TypeName::new(builtins::OBJECT, builtins::SPAN);
-                let parent_class = parent_class.unwrap_or(OBJECT);
-                Some(parent_class)
-            });
+        // Build up the type registry by recursively traversing discovered
+        // declarations and their inheritance relationships.
+        for (&class_name, &(class_span, parent)) in &discovered {
+            self.define_class(&discovered, class_name, class_span, parent);
         }
     }
 
     fn define_class(
         &mut self,
-        map: &ClassDefinitionMap,
+        map: &DiscoveredClasses,
         name: Interned<str>,
         span: Span,
         parent: Option<TypeName>,
@@ -107,8 +111,9 @@ impl Checker {
     }
 }
 
-type ClassDefinitionMap = HashMap<Interned<str>, (Span, Option<TypeName>)>;
+type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
 
+#[derive(Copy, Clone, Debug)]
 pub enum Error {
     DuplicateTypeDefinition {
         name: Interned<str>,
@@ -120,13 +125,19 @@ pub enum Error {
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
-    use crate::{ast::Program, parser, type_checker::Checker, util::intern::Interner};
+    use crate::{
+        ast::Program,
+        parser,
+        token::Spanned,
+        type_checker::{Checker, Error},
+        util::intern::Interner,
+    };
 
     #[test]
     fn test_build_type_registry() {
-        let (interner, prog) = parse_program(
+        let (i, prog) = parse_program(
             "
             class Entity {};
             class Mob inherits Entity {};
@@ -138,8 +149,8 @@ mod tests {
         checker.build_type_registry(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
-            checker.registry.hierarchy(&interner),
-            HashMap::from([
+            checker.registry.hierarchy(&i),
+            BTreeMap::from([
                 ("Cow", vec!["Cow", "Mob", "Entity", "Object", "<no-type>"]),
                 ("Io", vec!["Io", "Object", "<no-type>"]),
                 ("String", vec!["String", "Object", "<no-type>"]),
@@ -154,10 +165,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_build_type_registry_fails_with_duplicate_class() {
+        let (i, prog) = parse_program(
+            "
+            class Entity {};
+            class Entity {};
+            ",
+        );
+        let mut checker = Checker::with_capacity(16);
+        checker.build_type_registry(&prog);
+        assert_eq!(checker.errors.len(), 1);
+        assert_eq!(
+            pp(&i, &checker.errors[0]),
+            "48..54: Entity already defined at 19..25"
+        );
+    }
+
     fn parse_program(src: &str) -> (Interner<str>, Program) {
         let mut i = Interner::with_capacity(32);
         let prog = parser::parse_program(src, &mut Vec::with_capacity(512), &mut i)
             .expect("failed to parse");
         (i, prog)
+    }
+
+    fn pp(i: &Interner<str>, error: &Spanned<Error>) -> String {
+        let span = error.span;
+        match error.inner {
+            Error::DuplicateTypeDefinition {
+                name,
+                other_definition_span,
+            } => {
+                let name = i.get(name);
+                format!("{span}: {name} already defined at {other_definition_span}")
+            }
+            Error::UndefinedType(name) => {
+                let name = i.get(name);
+                format!("{span}: {name} is not defined")
+            }
+        }
     }
 }

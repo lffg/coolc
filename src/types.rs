@@ -31,7 +31,7 @@ impl TypeRegistry {
     pub fn hierarchy<'i>(
         &self,
         interner: &'i crate::util::intern::Interner<str>,
-    ) -> HashMap<&'i str, Vec<&'i str>> {
+    ) -> std::collections::BTreeMap<&'i str, Vec<&'i str>> {
         self.map
             .iter()
             .map(|(k, v)| {
