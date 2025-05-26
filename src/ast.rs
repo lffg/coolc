@@ -143,6 +143,7 @@ pub enum ExprKind<T = TypeName> {
         predicate: Box<Expr<T>>,
         body: Box<Expr<T>>,
     },
+    /// AKA: Sequence
     Block {
         /// Non empty list of expressions.
         body: Vec<Expr<T>>,

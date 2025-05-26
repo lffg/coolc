@@ -121,7 +121,15 @@ impl Checker {
                 (kind, lub)
             }
             ExprKind::While { predicate, body } => todo!(),
-            ExprKind::Block { body } => todo!(),
+            ExprKind::Block { body } => {
+                let body: Vec<_> = body.into_iter().map(|e| self.check_expr(e)).collect();
+                let last_ty = body
+                    .last()
+                    .expect("parser guarantees that sequence is never empty")
+                    .ty
+                    .clone();
+                (ExprKind::Block { body }, last_ty)
+            }
             ExprKind::Let { bindings, body } => {
                 let (bindings, scope) = self.get_typed_bindings_and_scope(bindings);
                 let body = self.scoped(scope, |this| this.check_expr(*body));
@@ -500,8 +508,18 @@ mod tests {
         }
 
         fn test_if_fails_with_wrong_predicate_type() {
-            let expr = r#"if 1 then false else false fi"#;
+            let expr = "if 1 then false else false fi";
             let expected_errors = &["3..4: expected type Bool, but got Int"];
+        }
+
+        fn test_block_aka_sequence() {
+            let expr = r#" { 1; true; "ok" } "#;
+            let tree_ok = r#"
+                block (1..18 %: String)
+                  int 1 (3..4 %: Int)
+                  bool true (6..10 %: Bool)
+                  string "ok" (12..16 %: String)
+            "#;
         }
     );
 
