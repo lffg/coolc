@@ -223,10 +223,11 @@ impl Checker {
             // If the source doesn't define a parent class, object is implied.
             //
             // Notice that we do NOT want to make this default below (when
-            // calling `self.define_class()`). Otherwise, `<no-type>`'s parent
-            // would be `Some(Object)` instead of `None` and such implicit
-            // built-in inheritance relationships wouldn't be persisted in the
-            // `discovered` map, which is itself used in `define_class()`.
+            // calling `self.define_class()`). Otherwise, `Object`'s parent
+            // would be `Some(Object)` instead of `None`. Not only that, such
+            // an implicit built-in inheritance relationships wouldn't be
+            // persisted in the `discovered` map, which is itself used in
+            // `define_class()`.
             // Yes, this was an excruciating bug.
             let val = (current_span, Some(class.inherits.unwrap_or(OBJECT)));
             discovered.insert(class.name.into(), val);
@@ -539,16 +540,16 @@ mod tests {
         assert_eq!(
             checker.registry.hierarchy(&i),
             BTreeMap::from([
-                ("Cow", vec!["Cow", "Mob", "Entity", "Object", "<no-type>"]),
-                ("Io", vec!["Io", "Object", "<no-type>"]),
-                ("String", vec!["String", "Object", "<no-type>"]),
-                ("Int", vec!["Int", "Object", "<no-type>"]),
-                ("Bool", vec!["Bool", "Object", "<no-type>"]),
-                ("Entity", vec!["Entity", "Object", "<no-type>"]),
-                ("Object", vec!["Object", "<no-type>"]),
-                ("Block", vec!["Block", "Entity", "Object", "<no-type>"]),
+                ("Cow", vec!["Cow", "Mob", "Entity", "Object"]),
+                ("Io", vec!["Io", "Object"]),
+                ("String", vec!["String", "Object"]),
+                ("Int", vec!["Int", "Object"]),
+                ("Bool", vec!["Bool", "Object"]),
+                ("Entity", vec!["Entity", "Object"]),
+                ("Object", vec!["Object"]),
+                ("Block", vec!["Block", "Entity", "Object"]),
                 ("<no-type>", vec!["<no-type>"]),
-                ("Mob", vec!["Mob", "Entity", "Object", "<no-type>"]),
+                ("Mob", vec!["Mob", "Entity", "Object"]),
             ])
         );
     }

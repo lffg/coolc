@@ -105,6 +105,9 @@ impl Default for Type {
 
 impl Type {
     pub fn is_subtype_of(&self, other: &Self) -> bool {
+        if self.name() == builtins::NO_TYPE {
+            return true;
+        };
         let mut curr = self;
         loop {
             if curr == other {
@@ -204,8 +207,13 @@ pub mod builtins {
 
     #[allow(clippy::type_complexity)]
     pub const ALL: &[(Interned<str>, &str, Option<Interned<str>>)] = &[
-        (NO_TYPE, NO_TYPE_NAME, None),
-        (OBJECT, OBJECT_NAME, Some(NO_TYPE)),
+        (
+            NO_TYPE,
+            NO_TYPE_NAME,
+            // Special case which is treated specially by `is_subtype_of`.
+            None,
+        ),
+        (OBJECT, OBJECT_NAME, None),
         (STRING, STRING_NAME, Some(OBJECT)),
         (INT, INT_NAME, Some(OBJECT)),
         (BOOL, BOOL_NAME, Some(OBJECT)),
@@ -254,10 +262,21 @@ mod tests {
         let i = &mut Interner::with_capacity(4);
         let reg = &mut TypeRegistry::with_capacity(4);
 
+        let no_type = define(i, reg, "<no-type>", None);
         let object = define(i, reg, "object", None);
         let mob = define(i, reg, "mob", Some(&object));
         let cow = define(i, reg, "cow", Some(&mob));
         let block = define(i, reg, "block", Some(&object));
+
+        assert!(no_type.is_subtype_of(&no_type));
+        assert!(no_type.is_subtype_of(&object));
+        assert!(no_type.is_subtype_of(&mob));
+        assert!(no_type.is_subtype_of(&cow));
+        assert!(no_type.is_subtype_of(&block));
+        assert!(!object.is_subtype_of(&no_type));
+        assert!(!mob.is_subtype_of(&no_type));
+        assert!(!cow.is_subtype_of(&no_type));
+        assert!(!block.is_subtype_of(&no_type));
 
         assert!(object.is_subtype_of(&object));
         assert!(!object.is_subtype_of(&mob));
