@@ -117,6 +117,32 @@ impl Type {
         }
     }
 
+    /// Returns the lowest upper-bound of the two types.
+    ///
+    /// ```none
+    ///                             /--- mob --- cow
+    ///             /--- entity ---+
+    ///            /                \--- chest
+    /// object ---+
+    ///            \--- item
+    ///
+    /// lub(cow, cow) = cow
+    /// lub(cow, mob) = mob
+    /// lub(chest, cow) = entity
+    /// lub(cow, item) = object
+    /// ```
+    ///
+    /// Note that this algorithm is not optimal in terms of performance, but for
+    /// now we prioritize clarity.
+    #[must_use]
+    pub fn lub(&self, other: &Self) -> Type {
+        let mut curr = self;
+        while !other.is_subtype_of(curr) {
+            curr = curr.parent().expect("all types are subtype of `<no-type>`");
+        }
+        curr.clone()
+    }
+
     pub fn name(&self) -> Interned<str> {
         self.0.name
     }
@@ -221,9 +247,9 @@ mod tests {
 
     #[test]
     fn is_subtype_of() {
-        //               /---- mob ---- cow
+        //               /--- mob --- cow
         //    object ----+
-        //               \---- block
+        //               \--- block
 
         let i = &mut Interner::with_capacity(4);
         let reg = &mut TypeRegistry::with_capacity(4);
@@ -252,6 +278,54 @@ mod tests {
         assert!(!block.is_subtype_of(&mob));
         assert!(!block.is_subtype_of(&cow));
         assert!(block.is_subtype_of(&block));
+    }
+
+    #[test]
+    fn lub() {
+        //                             /--- mob --- cow
+        //             /--- entity ---+
+        //            /                \--- chest
+        // object ---+
+        //            \--- item
+
+        let i = &mut Interner::with_capacity(8);
+        let reg = &mut TypeRegistry::with_capacity(8);
+
+        let object = define(i, reg, "object", None);
+        let entity = define(i, reg, "entity", Some(&object));
+        let mob = define(i, reg, "mob", Some(&entity));
+        let cow = define(i, reg, "cow", Some(&mob));
+        let chest = define(i, reg, "chest", Some(&entity));
+        let double_chest = define(i, reg, "double_chest", Some(&chest));
+        let item = define(i, reg, "item", Some(&object));
+
+        assert_eq!(&cow.lub(&cow), &cow);
+        assert_eq!(&object.lub(&object), &object);
+
+        assert_eq!(&cow.lub(&item), &object);
+        assert_eq!(&item.lub(&cow), &object);
+
+        assert_eq!(&cow.lub(&entity), &entity);
+        assert_eq!(&entity.lub(&cow), &entity);
+
+        assert_eq!(&double_chest.lub(&cow), &entity);
+        assert_eq!(&cow.lub(&double_chest), &entity);
+    }
+
+    #[test]
+    #[should_panic]
+    fn lub_no_common_type_panics() {
+        // root_a --- (...)
+        //
+        // root_b --- (...)
+
+        let i = &mut Interner::with_capacity(2);
+        let reg = &mut TypeRegistry::with_capacity(2);
+
+        let root_a = define(i, reg, "root_a", None);
+        let root_b = define(i, reg, "root_b", None);
+
+        root_a.lub(&root_b); // panics
     }
 
     fn define(
