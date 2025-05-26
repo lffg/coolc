@@ -457,14 +457,13 @@ mod tests {
         );
         let mut checker = Checker::with_capacity(16);
         checker.build_type_registry(&prog);
-        assert_eq!(checker.errors.len(), 2);
-        assert_eq!(
-            pp(&i, &checker.errors[0]),
-            "48..54: Entity already defined at 19..25"
-        );
-        assert_eq!(
-            pp(&i, &checker.errors[1]),
-            "78..84: Object already defined at 0..0"
+        assert_errors(
+            &i,
+            &checker.errors,
+            &[
+                "48..54: Entity already defined at 19..25",
+                "78..84: Object already defined at 0..0",
+            ],
         );
     }
 
@@ -477,10 +476,10 @@ mod tests {
         );
         let mut checker = Checker::with_capacity(16);
         checker.build_type_registry(&prog);
-        assert_eq!(checker.errors.len(), 1);
-        assert_eq!(
-            pp(&i, &checker.errors[0]),
-            "35..49: class UndefinedClass is not defined"
+        assert_errors(
+            &i,
+            &checker.errors,
+            &["35..49: class UndefinedClass is not defined"],
         );
     }
 
@@ -504,7 +503,7 @@ mod tests {
         checker.build_methods_env(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
-            pp_methods(&i, &checker.methods),
+            fmt_methods(&i, &checker.methods),
             BTreeMap::from([
                 (
                     ("A", "a1"),
@@ -532,18 +531,14 @@ mod tests {
         let mut checker = Checker::with_capacity(16);
         checker.build_type_registry(&prog);
         checker.build_methods_env(&prog);
-        assert_eq!(checker.errors.len(), 3);
-        assert_eq!(
-            pp(&i, &checker.errors[0]),
-            "64..74: class Undefined1 is not defined"
-        );
-        assert_eq!(
-            pp(&i, &checker.errors[1]),
-            "115..125: class Undefined2 is not defined"
-        );
-        assert_eq!(
-            pp(&i, &checker.errors[2]),
-            "163..173: class Undefined3 is not defined"
+        assert_errors(
+            &i,
+            &checker.errors,
+            &[
+                "64..74: class Undefined1 is not defined",
+                "115..125: class Undefined2 is not defined",
+                "163..173: class Undefined3 is not defined",
+            ],
         );
     }
 
@@ -554,7 +549,12 @@ mod tests {
         (i, prog)
     }
 
-    fn pp(i: &Interner<str>, error: &Spanned<Error>) -> String {
+    fn assert_errors(i: &Interner<str>, actual: &[Spanned<Error>], expected: &[&str]) {
+        let errors: Vec<_> = actual.iter().map(|e| fmt_error(i, e)).collect();
+        assert_eq!(errors, expected);
+    }
+
+    fn fmt_error(i: &Interner<str>, error: &Spanned<Error>) -> String {
         let span = error.span;
         match error.inner {
             Error::DuplicateTypeDefinition {
@@ -580,7 +580,7 @@ mod tests {
         }
     }
 
-    fn pp_methods<'i>(
+    fn fmt_methods<'i>(
         i: &'i Interner<str>,
         methods: &MethodsEnv,
     ) -> BTreeMap<(&'i str, &'i str), Vec<(&'i str, &'i str)>> {
