@@ -137,7 +137,28 @@ impl Checker {
                 let body = Box::new(body);
                 (ExprKind::Let { bindings, body }, ty)
             }
-            ExprKind::Case { predicate, arms } => todo!(),
+            ExprKind::Case { predicate, arms } => {
+                let mut lub = self.must_get_type(builtins::NO_TYPE);
+                let predicate = Box::new(self.check_expr(*predicate));
+                let arms = arms
+                    .into_iter()
+                    .map(|arm| {
+                        let ty = self.get_type(arm.ty);
+                        // recompute lub
+                        lub = lub.lub(&ty);
+
+                        let scope = Scope::from([(arm.name.name, ty.clone())]);
+                        let body = self.scoped(scope, |this| this.check_expr(*arm.body));
+
+                        ast::CaseArm {
+                            name: arm.name,
+                            ty,
+                            body: Box::new(body),
+                        }
+                    })
+                    .collect();
+                (ExprKind::Case { predicate, arms }, lub)
+            }
             ExprKind::Unary { op, expr } => todo!(),
             ExprKind::Binary { op, lhs, rhs } => todo!(),
             ExprKind::Paren(expr) => todo!(),
@@ -522,6 +543,23 @@ mod tests {
                   string "ok" (12..16 %: String)
             "#;
         }
+
+        fn test_case() {
+            let expr = "
+                case 1 of
+                    n : Int => n;
+                    s : String => s;
+                esac
+            ";
+            let tree_ok = "
+                case (17..118 %: Object)
+                  int 1 (22..23 %: Int)
+                  arm n: Int =>
+                    ident n (58..59 %: Int)
+                  arm s: String =>
+                    ident s (95..96 %: String)
+            ";
+        }
     );
 
     #[test]
@@ -548,7 +586,7 @@ mod tests {
                 ("Entity", vec!["Entity", "Object"]),
                 ("Object", vec!["Object"]),
                 ("Block", vec!["Block", "Entity", "Object"]),
-                ("<no-type>", vec!["<no-type>"]),
+                ("<no-type>", vec!["<no-type>", "Object"]),
                 ("Mob", vec!["Mob", "Entity", "Object"]),
             ])
         );

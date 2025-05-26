@@ -141,7 +141,9 @@ impl Type {
     pub fn lub(&self, other: &Self) -> Type {
         let mut curr = self;
         while !other.is_subtype_of(curr) {
-            curr = curr.parent().expect("all types are subtype of `<no-type>`");
+            curr = curr
+                .parent()
+                .expect("all types are subtype of `<object>` (the top-type)");
         }
         curr.clone()
     }
@@ -187,11 +189,15 @@ pub mod builtins {
 
     pub const SPAN: Span = Span::new_of_length(0, 0);
 
-    pub const NO_TYPE: Interned<str> = interned(1);
-    pub const NO_TYPE_NAME: &str = "<no-type>";
-
-    pub const OBJECT: Interned<str> = interned(2);
+    /// Top-type (supertype of all types)
+    pub const OBJECT: Interned<str> = interned(1);
     pub const OBJECT_NAME: &str = "Object";
+
+    /// Bottom-type (subtype of all types)
+    ///
+    /// Treated specially in [`crate::types::Type::is_subtype_of`].
+    pub const NO_TYPE: Interned<str> = interned(2);
+    pub const NO_TYPE_NAME: &str = "<no-type>";
 
     pub const STRING: Interned<str> = interned(3);
     pub const STRING_NAME: &str = "String";
@@ -207,13 +213,8 @@ pub mod builtins {
 
     #[allow(clippy::type_complexity)]
     pub const ALL: &[(Interned<str>, &str, Option<Interned<str>>)] = &[
-        (
-            NO_TYPE,
-            NO_TYPE_NAME,
-            // Special case which is treated specially by `is_subtype_of`.
-            None,
-        ),
         (OBJECT, OBJECT_NAME, None),
+        (NO_TYPE, NO_TYPE_NAME, Some(OBJECT)),
         (STRING, STRING_NAME, Some(OBJECT)),
         (INT, INT_NAME, Some(OBJECT)),
         (BOOL, BOOL_NAME, Some(OBJECT)),
@@ -262,8 +263,8 @@ mod tests {
         let i = &mut Interner::with_capacity(4);
         let reg = &mut TypeRegistry::with_capacity(4);
 
-        let no_type = define(i, reg, "<no-type>", None);
         let object = define(i, reg, "object", None);
+        let no_type = define(i, reg, "<no-type>", Some(&object));
         let mob = define(i, reg, "mob", Some(&object));
         let cow = define(i, reg, "cow", Some(&mob));
         let block = define(i, reg, "block", Some(&object));
@@ -311,11 +312,11 @@ mod tests {
         let reg = &mut TypeRegistry::with_capacity(8);
 
         let object = define(i, reg, "object", None);
+        let _no_type = define(i, reg, "<no-type>", Some(&object));
         let entity = define(i, reg, "entity", Some(&object));
         let mob = define(i, reg, "mob", Some(&entity));
         let cow = define(i, reg, "cow", Some(&mob));
         let chest = define(i, reg, "chest", Some(&entity));
-        let double_chest = define(i, reg, "double_chest", Some(&chest));
         let item = define(i, reg, "item", Some(&object));
 
         assert_eq!(&cow.lub(&cow), &cow);
@@ -327,24 +328,8 @@ mod tests {
         assert_eq!(&cow.lub(&entity), &entity);
         assert_eq!(&entity.lub(&cow), &entity);
 
-        assert_eq!(&double_chest.lub(&cow), &entity);
-        assert_eq!(&cow.lub(&double_chest), &entity);
-    }
-
-    #[test]
-    #[should_panic]
-    fn lub_no_common_type_panics() {
-        // root_a --- (...)
-        //
-        // root_b --- (...)
-
-        let i = &mut Interner::with_capacity(2);
-        let reg = &mut TypeRegistry::with_capacity(2);
-
-        let root_a = define(i, reg, "root_a", None);
-        let root_b = define(i, reg, "root_b", None);
-
-        _ = root_a.lub(&root_b); // panics
+        assert_eq!(&chest.lub(&mob), &entity);
+        assert_eq!(&mob.lub(&chest), &entity);
     }
 
     fn define(

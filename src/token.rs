@@ -154,6 +154,8 @@ pub enum TokenKind {
     Greater,
     /// `<-`
     Assign,
+    /// `=>`
+    FatArrow,
     Colon,
     Semicolon,
     Comma,

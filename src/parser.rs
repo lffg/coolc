@@ -620,7 +620,7 @@ impl Parser<'_, '_, '_> {
         let start_span = name.span;
         self.consume(TokenKind::Colon)?;
         let ty = self.parse_type()?;
-        self.consume(TokenKind::Assign)?;
+        self.consume(TokenKind::FatArrow)?;
         let body = self.parse_expr()?;
 
         let span = start_span.to(body.span);

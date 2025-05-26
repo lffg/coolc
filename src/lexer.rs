@@ -55,7 +55,10 @@ impl Lexer<'_, '_> {
             '*' => Star,
             '/' => Slash,
             '~' => Tilde,
-            '=' => Eq,
+            '=' => match self.peek() {
+                '>' => self.advance_with(FatArrow),
+                _ => Eq,
+            },
             '<' => match self.peek() {
                 '=' => self.advance_with(LessEq),
                 '-' => self.advance_with(Assign),
@@ -481,6 +484,15 @@ mod tests {
                 (Minus, 26..27),
                 (RParen, 27..28),
                 (Eof, 28..28),
+            ],
+            "=>>==>=>>=>" => [
+                (FatArrow, 0..2),
+                (GreaterEq, 2..4),
+                (FatArrow, 4..6),
+                (FatArrow, 6..8),
+                (GreaterEq, 8..10),
+                (Greater, 10..11),
+                (Eof, 11..11),
             ],
         });
 
