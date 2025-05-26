@@ -84,7 +84,7 @@ impl Checker {
     }
 
     fn check_method(&mut self, method: ast::Method) -> ast::Method<Type> {
-        let (scope, formals) = self.get_method_scope_and_typed_formals(&method);
+        let (formals, scope) = self.get_typed_formals_and_scope(method.formals);
         let body = self.scoped(scope, |this| this.check_expr(method.body));
         ast::Method {
             name: method.name,
@@ -110,12 +110,21 @@ impl Checker {
             } => todo!(),
             ExprKind::While { predicate, body } => todo!(),
             ExprKind::Block { body } => todo!(),
-            ExprKind::Let { bindings, body } => todo!(),
+            ExprKind::Let { bindings, body } => {
+                let (bindings, scope) = self.get_typed_bindings_and_scope(bindings);
+                let body = self.scoped(scope, |this| this.check_expr(*body));
+                let ty = body.ty.clone();
+                let body = Box::new(body);
+                (ExprKind::Let { bindings, body }, ty)
+            }
             ExprKind::Case { predicate, arms } => todo!(),
             ExprKind::Unary { op, expr } => todo!(),
             ExprKind::Binary { op, lhs, rhs } => todo!(),
             ExprKind::Paren(expr) => todo!(),
-            ExprKind::Id(ident) => todo!(),
+            ExprKind::Id(ident) => {
+                let ty = self.lookup_scope(&ident);
+                (ExprKind::Id(ident), ty)
+            }
             ExprKind::Int(int) => (ExprKind::Int(int), self.must_get_type(builtins::INT)),
             ExprKind::String(string) => (
                 ExprKind::String(string),
@@ -264,7 +273,27 @@ impl Checker {
 
 // Utility functions
 impl Checker {
-    pub fn get_class_methods(class: &ast::Class) -> impl Iterator<Item = &ast::Method> + '_ {
+    /// Looks up in the scope stack, or returns [`builtins::NO_TYPE`] with a
+    /// registered error if not find.
+    fn lookup_scope(&mut self, ident: &ast::Ident) -> Type {
+        for scope in self.scopes.iter().rev() {
+            if let Some(ty) = scope.get(&ident.name) {
+                return ty.clone();
+            }
+        }
+        let error = Error::UndefinedName(ident.name);
+        self.errors.push(ident.span.wrap(error));
+        self.must_get_type(builtins::NO_TYPE)
+    }
+
+    fn scoped<T>(&mut self, scope: Scope, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.scopes.push(scope);
+        let res = f(self);
+        self.scopes.pop();
+        res
+    }
+
+    fn get_class_methods(class: &ast::Class) -> impl Iterator<Item = &ast::Method> + '_ {
         class.features.iter().filter_map(move |feature| {
             if let ast::Feature::Method(method) = feature {
                 Some(method)
@@ -274,7 +303,7 @@ impl Checker {
         })
     }
 
-    pub fn get_class_scope(&mut self, class: &ast::Class) -> Scope {
+    fn get_class_scope(&mut self, class: &ast::Class) -> Scope {
         let current_class = self.get_current_class();
         class
             .features
@@ -290,28 +319,43 @@ impl Checker {
             .collect()
     }
 
-    pub fn get_method_scope_and_typed_formals(
+    fn get_typed_formals_and_scope(
         &mut self,
-        method: &ast::Method,
-    ) -> (Scope, Vec<ast::Formal<Type>>) {
-        let mut scope = Scope::with_capacity(method.formals.len());
-        let mut formals = Vec::with_capacity(method.formals.len());
-        for formal in &method.formals {
-            let ty = self.get_type(formal.ty);
-            scope.insert(formal.name.name, ty.clone());
-            formals.push(ast::Formal {
-                name: formal.name,
-                ty,
-            });
-        }
-        (scope, formals)
+        formals: Vec<ast::Formal>,
+    ) -> (Vec<ast::Formal<Type>>, Scope) {
+        let mut scope = Scope::with_capacity(formals.len());
+        let formals = formals
+            .into_iter()
+            .map(|formal| {
+                let ty = self.get_type(formal.ty);
+                scope.insert(formal.name.name, ty.clone());
+                ast::Formal {
+                    name: formal.name,
+                    ty,
+                }
+            })
+            .collect();
+        (formals, scope)
     }
 
-    pub fn scoped<T>(&mut self, scope: Scope, f: impl FnOnce(&mut Self) -> T) -> T {
-        self.scopes.push(scope);
-        let res = f(self);
-        self.scopes.pop();
-        res
+    fn get_typed_bindings_and_scope(
+        &mut self,
+        bindings: Vec<ast::Binding>,
+    ) -> (Vec<ast::Binding<Type>>, Scope) {
+        let mut scope = Scope::with_capacity(bindings.len());
+        let bindings = bindings
+            .into_iter()
+            .map(|binding| {
+                let ty = self.get_type(binding.ty);
+                scope.insert(binding.name.name, ty.clone());
+                ast::Binding {
+                    name: binding.name,
+                    ty,
+                    initializer: binding.initializer.map(|i| self.check_expr(i)),
+                }
+            })
+            .collect();
+        (bindings, scope)
     }
 }
 
@@ -322,6 +366,7 @@ pub enum Error {
         other_definition_span: Span,
     },
     UndefinedType(Interned<str>),
+    UndefinedName(Interned<str>),
 }
 
 type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
@@ -416,7 +461,7 @@ mod tests {
         assert_eq!(checker.errors.len(), 1);
         assert_eq!(
             pp(&i, &checker.errors[0]),
-            "35..49: UndefinedClass is not defined"
+            "35..49: class UndefinedClass is not defined"
         );
     }
 
@@ -471,15 +516,15 @@ mod tests {
         assert_eq!(checker.errors.len(), 3);
         assert_eq!(
             pp(&i, &checker.errors[0]),
-            "64..74: Undefined1 is not defined"
+            "64..74: class Undefined1 is not defined"
         );
         assert_eq!(
             pp(&i, &checker.errors[1]),
-            "115..125: Undefined2 is not defined"
+            "115..125: class Undefined2 is not defined"
         );
         assert_eq!(
             pp(&i, &checker.errors[2]),
-            "163..173: Undefined3 is not defined"
+            "163..173: class Undefined3 is not defined"
         );
     }
 
@@ -501,6 +546,10 @@ mod tests {
                 format!("{span}: {name} already defined at {other_definition_span}")
             }
             Error::UndefinedType(name) => {
+                let name = i.get(name);
+                format!("{span}: class {name} is not defined")
+            }
+            Error::UndefinedName(name) => {
                 let name = i.get(name);
                 format!("{span}: {name} is not defined")
             }
