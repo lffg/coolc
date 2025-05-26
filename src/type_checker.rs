@@ -24,10 +24,10 @@ impl Checker {
         }
     }
 
-    pub fn check(mut self, program: Program) -> (Program, TypeRegistry) {
-        self.build_type_registry(&program);
+    pub fn check(mut self, program: &Program) -> (Program<Type>, TypeRegistry) {
+        self.build_type_registry(program);
 
-        (program, self.registry)
+        (Program::default(), self.registry)
     }
 
     /// Scans through the program's source and records all classes in the

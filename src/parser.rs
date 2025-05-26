@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         BinaryOperator, Binding, CaseArm, Class, DispatchQualifier, Expr, ExprKind, Feature,
-        Formal, Ident, Program, TypeName, UnaryOperator,
+        Formal, Ident, Method, Program, TypeName, UnaryOperator,
     },
     lexer::{self, extract},
     token::{Span, Spanned, Token, TokenKind},
@@ -23,7 +23,7 @@ pub fn parse_program(
         tokens,
         ident_interner,
         Parser::parse_program,
-        Program::dummy,
+        Program::default,
     )
 }
 
@@ -145,12 +145,12 @@ impl Parser<'_, '_, '_> {
                 self.consume(TokenKind::LBrace)?;
                 let body = self.parse_expr()?;
                 self.consume(TokenKind::RBrace)?;
-                Ok(Feature::Method {
+                Ok(Feature::Method(Method {
                     name,
                     formals,
                     return_ty,
                     body,
-                })
+                }))
             }
             _ => unreachable!(),
         }
@@ -365,7 +365,11 @@ impl Parser<'_, '_, '_> {
             }
         };
 
-        Ok(Expr { kind, span })
+        Ok(Expr {
+            kind,
+            span,
+            ty: TypeName::default(),
+        })
     }
 
     /// led: Parses tokens that follow a left-hand-side expression
@@ -495,7 +499,11 @@ impl Parser<'_, '_, '_> {
             }
         };
 
-        Ok(Expr { kind, span })
+        Ok(Expr {
+            kind,
+            span,
+            ty: TypeName::default(),
+        })
     }
 
     /// Parses `item (delim item)*` until `end_delim` is found. Does **NOT**

@@ -60,24 +60,19 @@ fn print_feature(
             write!(w, "attribute ")?;
             print_binding(w, idents, i, binding)?;
         }
-        Feature::Method {
+        Feature::Method(Method {
             name,
             formals,
             return_ty,
             body,
-        } => {
+        }) => {
             sp(w, i)?;
             write!(w, "method {}(", idents.get(name))?;
             for (idx, formal) in formals.iter().enumerate() {
                 if idx > 0 {
                     write!(w, ", ")?;
                 }
-                write!(
-                    w,
-                    "{}: {}",
-                    idents.get(formal.name),
-                    idents.get(formal.ty)
-                )?;
+                write!(w, "{}: {}", idents.get(formal.name), idents.get(formal.ty))?;
             }
             write!(w, ") : {}", idents.get(return_ty))?;
             writeln!(w)?;
@@ -229,12 +224,7 @@ fn print_case_arm(
     arm: &CaseArm,
 ) -> std::io::Result<()> {
     sp(w, i)?;
-    writeln!(
-        w,
-        "arm {}: {} =>",
-        idents.get(arm.name),
-        idents.get(arm.ty)
-    )?;
+    writeln!(w, "arm {}: {} =>", idents.get(arm.name), idents.get(arm.ty))?;
     print_expr(w, idents, i + 1, &arm.body)?;
     Ok(())
 }

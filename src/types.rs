@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, hash::Hash, rc::Rc};
 
 use crate::{token::Span, util::intern::Interned};
 
@@ -75,9 +75,31 @@ impl TypeRegistry {
 #[derive(Clone, Debug)]
 pub struct Type(Rc<TypeInner>);
 
+/// See comment in `PartialEq` implementation for [`Type`].
+impl Hash for Type {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.name.hash(state);
+    }
+}
+
+/// Since each type can only be defined once (see invariant in
+/// [`TypeRegistry::define`]), we can use the interned name as the predicate for
+/// type equality.
 impl PartialEq for Type {
     fn eq(&self, other: &Self) -> bool {
         self.name() == other.name()
+    }
+}
+
+impl Eq for Type {}
+
+impl Default for Type {
+    fn default() -> Self {
+        Type(Rc::new(TypeInner {
+            name: builtins::NO_TYPE,
+            span: builtins::SPAN,
+            parent: None,
+        }))
     }
 }
 
@@ -85,10 +107,7 @@ impl Type {
     pub fn is_subtype_of(&self, other: &Self) -> bool {
         let mut curr = self;
         loop {
-            // Since each type can only be defined once (see invariant in
-            // `TypeRegistry::define`), we can use the interned name as the
-            // predicate for type equality.
-            if curr.name() == other.name() {
+            if curr == other {
                 return true;
             }
             match curr.parent() {
