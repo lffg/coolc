@@ -161,11 +161,9 @@ impl Checker {
                     .into_iter()
                     .map(|arm| {
                         let ty = self.get_type(arm.ty);
-                        // recompute lub
-                        lub = lub.lub(&ty);
-
                         let scope = Scope::from([(arm.name.name, ty.clone())]);
                         let body = self.scoped(scope, |this| this.check_expr(*arm.body));
+                        lub = lub.lub(&body.ty);
 
                         ast::CaseArm {
                             name: arm.name,
