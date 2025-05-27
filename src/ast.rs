@@ -188,15 +188,16 @@ pub struct CaseArm<T = TypeName> {
     pub body: Box<Expr<T>>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum UnaryOperator {
     New,
     IsVoid,
+    /// AKA Negation (of integers)
     Inverse,
     Not,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum BinaryOperator {
     Add,
     Sub,

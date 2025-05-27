@@ -54,6 +54,7 @@ impl Lexer<'_, '_> {
             },
             '*' => Star,
             '/' => Slash,
+            '!' => Not,
             '~' => Tilde,
             '=' => match self.peek() {
                 '>' => self.advance_with(FatArrow),

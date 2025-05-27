@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{self, Expr, ExprKind, Program, TypeName},
+    ast::{self, BinaryOperator, Expr, ExprKind, Program, TypeName, UnaryOperator},
     token::{Span, Spanned},
     types::{builtins, well_known, Type, TypeRegistry},
     util::intern::Interned,
@@ -176,9 +176,49 @@ impl Checker {
                     .collect();
                 (ExprKind::Case { predicate, arms }, lub)
             }
-            ExprKind::Unary { op, expr } => todo!(),
-            ExprKind::Binary { op, lhs, rhs } => todo!(),
-            ExprKind::Paren(expr) => todo!(),
+            ExprKind::Unary { op, expr } => {
+                let mut unary = |expr: Box<Expr<_>>, expected| {
+                    let expr = Box::new(self.check_expr(*expr));
+                    let ty = expr.ty.clone();
+                    self.assert_is_type(&ty, expected, expr.span);
+                    (ExprKind::Unary { op, expr }, ty)
+                };
+
+                match op {
+                    UnaryOperator::New => todo!(),
+                    UnaryOperator::IsVoid => {
+                        let expr = Box::new(self.check_expr(*expr));
+                        let ty = self.must_get_type(builtins::BOOL);
+                        (ExprKind::Unary { op, expr }, ty)
+                    }
+                    UnaryOperator::Inverse => unary(expr, builtins::INT),
+                    UnaryOperator::Not => unary(expr, builtins::BOOL),
+                }
+            }
+            ExprKind::Binary { op, lhs, rhs } => {
+                let binary = |expected, ret| {
+                    let lhs = Box::new(self.check_expr(*lhs));
+                    let rhs = Box::new(self.check_expr(*rhs));
+                    self.assert_is_type(&lhs.ty, expected, lhs.span);
+                    self.assert_is_type(&rhs.ty, expected, rhs.span);
+                    (ExprKind::Binary { op, lhs, rhs }, self.must_get_type(ret))
+                };
+
+                match op {
+                    BinaryOperator::Add => binary(builtins::INT, builtins::INT),
+                    BinaryOperator::Sub => binary(builtins::INT, builtins::INT),
+                    BinaryOperator::Mul => binary(builtins::INT, builtins::INT),
+                    BinaryOperator::Div => binary(builtins::INT, builtins::INT),
+                    BinaryOperator::Eq => todo!(),
+                    BinaryOperator::Le => binary(builtins::INT, builtins::BOOL),
+                    BinaryOperator::Leq => binary(builtins::INT, builtins::BOOL),
+                }
+            }
+            ExprKind::Paren(expr) => {
+                let expr = Box::new(self.check_expr(*expr));
+                let ty = expr.ty.clone();
+                (ExprKind::Paren(expr), ty)
+            }
             ExprKind::Id(ident) => {
                 let ty = self.lookup_scope(&ident);
                 (ExprKind::Id(ident), ty)
@@ -630,6 +670,96 @@ mod tests {
         fn test_while_fails_with_wrong_predicate_type() {
             let expr = "while 2 loop 1 pool";
             let expected_errors = &["6..7: expected type Bool, but got Int"];
+        }
+
+        fn test_binary_and_unary_ok() {
+            let expr = "
+                {
+                    isvoid true;
+                    isvoid 1;
+                    !true;
+                    ~1;
+                    1 + 1;
+                    1 - 1;
+                    1 * 1;
+                    1 / 1;
+                    1 < 1;
+                    1 <= 1;
+                }
+            ";
+            let tree_ok = "
+                block (17..313 %: Bool)
+                  unary IsVoid (39..50 %: Bool)
+                    bool true (46..50 %: Bool)
+                  unary IsVoid (72..80 %: Bool)
+                    int 1 (79..80 %: Int)
+                  unary Not (102..107 %: Bool)
+                    bool true (103..107 %: Bool)
+                  unary Inverse (129..131 %: Int)
+                    int 1 (130..131 %: Int)
+                  binary Add (153..158 %: Int)
+                    int 1 (153..154 %: Int)
+                    int 1 (157..158 %: Int)
+                  binary Sub (180..185 %: Int)
+                    int 1 (180..181 %: Int)
+                    int 1 (184..185 %: Int)
+                  binary Mul (207..212 %: Int)
+                    int 1 (207..208 %: Int)
+                    int 1 (211..212 %: Int)
+                  binary Div (234..239 %: Int)
+                    int 1 (234..235 %: Int)
+                    int 1 (238..239 %: Int)
+                  binary Le (261..266 %: Bool)
+                    int 1 (261..262 %: Int)
+                    int 1 (265..266 %: Int)
+                  binary Leq (288..294 %: Bool)
+                    int 1 (288..289 %: Int)
+                    int 1 (293..294 %: Int)
+            ";
+        }
+
+        // --- Combined Failing Binary Operator Test ---
+        fn test_all_binary_operator_failures_in_block() {
+            let expr = r#"
+                {
+                    !1;
+                    ~true;
+                    true + 1;
+                    1 + true;
+                    "a" + false;
+                    false - 1;
+                    1 - "str";
+                    "s" * 1;
+                    1 * true;
+                    true / 1;
+                    1 / "str";
+                    true < 1;
+                    1 < "str";
+                    "a" < false;
+                    false <= 1;
+                    1 <= "s";
+                }
+             "#;
+            let expected_errors = &[
+                "40..41: expected type Bool, but got Int",
+                "64..68: expected type Int, but got Bool",
+                "90..94: expected type Int, but got Bool",
+                "124..128: expected type Int, but got Bool",
+                "150..153: expected type Int, but got String",
+                "156..161: expected type Int, but got Bool",
+                "183..188: expected type Int, but got Bool",
+                "218..223: expected type Int, but got String",
+                "245..248: expected type Int, but got String",
+                "278..282: expected type Int, but got Bool",
+                "304..308: expected type Int, but got Bool",
+                "338..343: expected type Int, but got String",
+                "365..369: expected type Int, but got Bool",
+                "399..404: expected type Int, but got String",
+                "426..429: expected type Int, but got String",
+                "432..437: expected type Int, but got Bool",
+                "459..464: expected type Int, but got Bool",
+                "496..499: expected type Int, but got String",
+            ];
         }
     );
 
