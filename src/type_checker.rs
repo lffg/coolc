@@ -97,7 +97,13 @@ impl Checker {
     #[expect(unused_variables)]
     fn check_expr(&mut self, expr: Expr) -> Expr<Type> {
         let (kind, ty) = match expr.kind {
-            ExprKind::Assignment { target, value } => todo!(),
+            ExprKind::Assignment { target, value } => {
+                let target_ty = self.lookup_scope(&target);
+                let value = Box::new(self.check_expr(*value));
+                let value_ty = value.ty.clone();
+                self.assert_is_subtype(&value_ty, &target_ty, value.span);
+                (ExprKind::Assignment { target, value }, value_ty)
+            }
             ExprKind::Dispatch {
                 qualifier,
                 method,
@@ -316,6 +322,14 @@ impl Checker {
     /// (variant [`Error::Unassignable`]) with the provided span.
     fn assert_is_subtype(&mut self, a: &Type, b: &Type, span: Span) {
         if !a.is_subtype_of(b) {
+            // This case is probably a consequence of a previous error, so we
+            // don't emit another error if that's the case.
+            if b.name() == builtins::NO_TYPE {
+                // Just assumed that we have at least one error (which caused
+                // this one).
+                assert!(!self.errors.is_empty());
+                return;
+            }
             self.errors.push(span.wrap(Error::Unassignable {
                 dst: b.name(),
                 src: a.name(),
@@ -560,6 +574,38 @@ mod tests {
                     ident s (95..96 %: String)
             ";
         }
+
+        fn test_assign_ok() {
+            let expr = "let a : Int in a <- 1";
+            let tree_ok = "
+                let (0..21 %: Int)
+                  binding a: Int
+                  in
+                    assignment a (15..21 %: Int)
+                      int 1 (20..21 %: Int)
+            ";
+        }
+
+        fn test_assign_ok_subtype() {
+            let expr = "let a : Object in a <- 1";
+            let tree_ok = "
+                let (0..24 %: Int)
+                  binding a: Object
+                  in
+                    assignment a (18..24 %: Int)
+                      int 1 (23..24 %: Int)
+            ";
+        }
+
+        fn test_assign_fails_with_undefined_name() {
+            let expr = "a <- 1";
+            let expected_errors = &["0..1: a is not defined"];
+        }
+
+        fn test_assign_fails_with_unassignable_type() {
+            let expr = "let a : Int in a <- true";
+            let expected_errors = &["20..24: type Bool is not assignable to type Int"];
+        }
     );
 
     #[test]
@@ -801,9 +847,10 @@ pub mod test_utils {
         };
 
         (@@assertion($kind:ident, expected_errors), $ctx:expr, $expected:expr) => {
+            let expected: &[&str] = $expected;
             let (i, _typed_ast, actual_errors) = $ctx;
             let errors: Vec<_> = actual_errors.iter().map(|e| fmt_error(&i, e)).collect();
-            ::pretty_assertions::assert_eq!(errors, $expected);
+            ::pretty_assertions::assert_eq!(errors, expected);
         };
         (@@assertion($kind:ident, tree_ok), $ctx:expr, $expected:expr) => {
             let expected = ::indoc::indoc! { $expected }.trim();

@@ -164,7 +164,7 @@ where
     let span = expr.span;
     match &expr.kind {
         ExprKind::Assignment { target, value } => {
-            writeln!(w, "assignment {} ({span}{ty}) ", idents.get(target))?;
+            writeln!(w, "assignment {} ({span}{ty})", idents.get(target))?;
             print_expr(w, idents, i + 1, value)?;
         }
         ExprKind::Dispatch {
