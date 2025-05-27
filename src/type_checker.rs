@@ -116,9 +116,11 @@ impl Checker {
             } => {
                 let predicate = self.check_expr(*predicate);
                 self.assert_is_type(&predicate.ty, builtins::BOOL, predicate.span);
+
                 let then_arm = self.check_expr(*then_arm);
                 let else_arm = self.check_expr(*else_arm);
                 let lub = then_arm.ty.lub(&else_arm.ty);
+
                 let kind = ExprKind::Conditional {
                     predicate: Box::new(predicate),
                     then_arm: Box::new(then_arm),
@@ -126,7 +128,16 @@ impl Checker {
                 };
                 (kind, lub)
             }
-            ExprKind::While { predicate, body } => todo!(),
+            ExprKind::While { predicate, body } => {
+                let predicate = Box::new(self.check_expr(*predicate));
+                self.assert_is_type(&predicate.ty, builtins::BOOL, predicate.span);
+
+                let body = Box::new(self.check_expr(*body));
+
+                // Type of a while expression is Object (void)
+                let object_ty = self.must_get_type(builtins::OBJECT);
+                (ExprKind::While { predicate, body }, object_ty)
+            }
             ExprKind::Block { body } => {
                 let body: Vec<_> = body.into_iter().map(|e| self.check_expr(e)).collect();
                 let last_ty = body
@@ -605,6 +616,20 @@ mod tests {
         fn test_assign_fails_with_unassignable_type() {
             let expr = "let a : Int in a <- true";
             let expected_errors = &["20..24: type Bool is not assignable to type Int"];
+        }
+
+        fn test_while() {
+            let expr = "while true loop 1 pool";
+            let tree_ok = "
+                while (0..22 %: Object)
+                  bool true (6..10 %: Bool)
+                  int 1 (16..17 %: Int)
+            ";
+        }
+
+        fn test_while_fails_with_wrong_predicate_type() {
+            let expr = "while 2 loop 1 pool";
+            let expected_errors = &["6..7: expected type Bool, but got Int"];
         }
     );
 
