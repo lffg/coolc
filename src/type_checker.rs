@@ -40,10 +40,13 @@ impl Checker {
         self.build_type_registry(&program);
         self.build_methods_env(&program);
 
+        let mut seen_attributes = HashMap::with_capacity(16);
+        let mut seen_methods = HashMap::with_capacity(16);
+
         let classes = program
             .classes
             .into_iter()
-            .map(|class| self.check_class(class))
+            .map(|class| self.check_class(class, &mut seen_attributes, &mut seen_methods))
             .collect();
         let program = Program { classes };
 
@@ -54,7 +57,28 @@ impl Checker {
         }
     }
 
-    fn check_class(&mut self, class: ast::Class) -> ast::Class<Type> {
+    fn check_class(
+        &mut self,
+        class: ast::Class,
+        seen_attributes: &mut HashMap<Interned<str>, Span>,
+        seen_methods: &mut HashMap<Interned<str>, Span>,
+    ) -> ast::Class<Type> {
+        fn assert_unseen(
+            c: &mut Checker,
+            map: &mut HashMap<Interned<str>, Span>,
+            ident: ast::Ident,
+            error: impl Fn(Span) -> Error,
+        ) {
+            if let Some(&prev) = map.get(&ident.name) {
+                c.errors.push(ident.span.wrap(error(prev)));
+            } else {
+                map.insert(ident.name, ident.span);
+            }
+        }
+
+        seen_attributes.clear();
+        seen_methods.clear();
+
         self.current_class = class.name.name();
         let scope = self.get_class_scope(&class);
         let features = self.scoped(scope, move |this| {
@@ -63,9 +87,21 @@ impl Checker {
                 .into_iter()
                 .map(|feature| match feature {
                     ast::Feature::Attribute(binding) => {
+                        assert_unseen(this, seen_attributes, binding.name, |other| {
+                            Error::DuplicateAttributeInClass {
+                                other_definition_span: other,
+                            }
+                        });
                         ast::Feature::Attribute(this.check_binding(binding))
                     }
-                    ast::Feature::Method(method) => ast::Feature::Method(this.check_method(method)),
+                    ast::Feature::Method(method) => {
+                        assert_unseen(this, seen_methods, method.name, |other| {
+                            Error::DuplicateMethodInClass {
+                                other_definition_span: other,
+                            }
+                        });
+                        ast::Feature::Method(this.check_method(method))
+                    }
                 })
                 .collect()
         });
@@ -89,10 +125,12 @@ impl Checker {
     fn check_method(&mut self, method: ast::Method) -> ast::Method<Type> {
         let (formals, scope) = self.get_typed_formals_and_scope(method.formals);
         let body = self.scoped(scope, |this| this.check_expr(method.body));
+        let return_ty = self.get_type_allowing_self_type(method.return_ty);
+        self.assert_is_subtype(&body.ty, &return_ty, body.span);
         ast::Method {
             name: method.name,
             formals,
-            return_ty: self.get_type(method.return_ty),
+            return_ty,
             body,
         }
     }
@@ -298,21 +336,28 @@ impl Checker {
             Rc::new(HashMap::with_capacity(0))
         };
 
-        let class = &classes[&class_ty.name()];
-        let mut methods = Self::get_class_methods(class).peekable();
+        let methods_map = 'block: {
+            let Some(class) = classes.get(&class_ty.name()) else {
+                // If the current class is not defined, we just consider return
+                // and keep recursing to build the chain. Notice that we
+                // couldn't `return` here to keep building the chain.
+                break 'block inherited_methods;
+            };
+            let mut methods = Self::get_class_methods(class).peekable();
 
-        let methods_map = if methods.peek().is_none() {
-            // If this class doesn't define any new methods, we simply point to
-            // the parent's definition.
-            inherited_methods
-        } else {
+            if methods.peek().is_none() {
+                // If this class doesn't define any methods, we simply point to
+                // the parent's definition.
+                break 'block inherited_methods;
+            }
+
             let new_methods = methods.map(|method| {
                 let sig = MethodSignature {
                     formals: method.formals.clone(),
                     return_ty: method.return_ty,
                 };
                 if let Some(parent_sig) = inherited_methods.get(&method.name.name) {
-                    self.assert_is_signature_match(&sig, parent_sig);
+                    self.assert_is_signature_match(&sig, parent_sig, method.name.span);
                 }
                 (method.name.name, sig)
             });
@@ -514,9 +559,17 @@ impl Checker {
         &mut self,
         child_sig: &MethodSignature,
         parent_sig: &MethodSignature,
+        current_method_name_span: Span,
     ) {
         let actual = child_sig;
         let expected = parent_sig;
+
+        if actual.formals.len() != expected.formals.len() {
+            let actual = u16::try_from(actual.formals.len()).unwrap();
+            let expected = u16::try_from(expected.formals.len()).unwrap();
+            let error = Error::OverriddenWithIncorrectNumberOfParameters { actual, expected };
+            self.errors.push(current_method_name_span.wrap(error));
+        }
 
         for (actual, expected) in actual.formals.iter().zip(&expected.formals) {
             let actual_ty = self.get_type_no_error(actual.ty);
@@ -643,6 +696,12 @@ pub enum Error {
         name: Interned<str>,
         other_definition_span: Span,
     },
+    DuplicateMethodInClass {
+        other_definition_span: Span,
+    },
+    DuplicateAttributeInClass {
+        other_definition_span: Span,
+    },
     UndefinedType(Interned<str>),
     UndefinedName(Interned<str>),
     Unassignable {
@@ -654,6 +713,9 @@ pub enum Error {
         expected: Interned<str>,
     },
     IllegalSelfType,
+    MaximumNumberOfParametersExceeded {
+        current: usize,
+    },
     OverriddenWithIncorrectNumberOfParameters {
         actual: u16,
         expected: u16,
@@ -1053,6 +1115,178 @@ mod tests {
                     new A (55..68 %: A)
             ";
         }
+
+        fn test_method_scope_ok() {
+            let program = "
+                class A {
+                    a(a1: String, a2: Bool) : Int { { self; a1; a2; 0; } };
+                };
+            ";
+            let tree_ok = "
+                class A
+                  method a(a1: String, a2: Bool) : Int
+                    block (79..99 %: Int)
+                      ident self (81..85 %: A)
+                      ident a1 (87..89 %: String)
+                      ident a2 (91..93 %: Bool)
+                      int 0 (95..96 %: Int)
+            ";
+        }
+
+        fn test_method_override_ok() {
+            let program = "
+                class A {
+                    foo(p: Int) : Bool { true };
+                };
+                class B inherits A {
+                    foo(p: Int) : Bool { false };
+                };
+            ";
+            let tree_ok = "
+                class A
+                  method foo(p: Int) : Bool
+                    bool true (68..72 %: Bool)
+                class B inherits A
+                  method foo(p: Int) : Bool
+                    bool false (173..178 %: Bool)
+            ";
+        }
+
+        fn test_fails_to_override_with_different_signature() {
+            let program = "
+                class A {
+                    foo(p: Int) : Bool { true };
+                };
+                class B inherits A {
+                    foo(p: String) : Bool { false };
+                };
+                class C inherits A {
+                    foo() : Bool { false };
+                };
+                class D inherits A {
+                    foo(p: Int) : Int { 0 };
+                };
+                class E inherits A {
+                    foo(p: Int, q: Int) : Bool { true };
+                };
+                class F inherits A {
+                    foo(p: String, q: Int) : Bool { true };
+                };
+            ";
+            let expected_errors = &[
+                // B
+                "159..165: overriding method with incorrect parameter type: \
+                    expected type Int, but got String",
+                // C
+                "261..264: overriding method of originally 1 parameters, but new definition has 0",
+                // D
+                "375..378: overriding method with incorrect return type: \
+                    expected type Bool, but got Int",
+                // E
+                "462..465: overriding method of originally 1 parameters, but new definition has 2",
+                // F
+                "575..578: overriding method of originally 1 parameters, but new definition has 2",
+                "582..588: overriding method with incorrect parameter type: \
+                    expected type Int, but got String",
+            ];
+        }
+
+        fn test_fails_when_using_undefined_parameter_or_return_types() {
+            let program = "
+                class A {
+                    a(a1: Undefined1) : Int { 0 };
+                    b(b1: Int) : Undefined2 { 0 };
+                    c(c1: Undefined3) : Undefined4 { 0 };
+                };
+            ";
+            let expected_errors = &[
+                "53..63: class Undefined1 is not defined",
+                "111..121: class Undefined2 is not defined",
+                "155..165: class Undefined3 is not defined",
+                "169..179: class Undefined4 is not defined",
+            ];
+        }
+
+        fn test_can_use_self_type_in_return_type() {
+            let program = "
+                class A {
+                    a1() : SELF_TYPE { new SELF_TYPE };
+                    a2() : SELF_TYPE { self };
+                };
+            ";
+            let tree_ok = "
+                class A
+                  method a1() : A
+                    new A (66..79 %: A)
+                  method a2() : A
+                    ident self (122..126 %: A)
+            ";
+        }
+
+        fn test_method_return_type_ok() {
+            let program = "
+                class A {};
+                class B inherits A {};
+                class C {
+                    c1() : A { new B };
+                    c2() : A { new A };
+                };
+            ";
+            let tree_ok = "
+                class A
+                class B inherits A
+                class C
+                  method c1() : A
+                    new B (125..130 %: B)
+                  method c2() : A
+                    new A (165..170 %: A)
+            ";
+        }
+
+        fn test_method_return_type_fails() {
+            let program = "
+                class A {};
+                class B inherits A {};
+                class C {
+                    c() : B { new A };
+                };
+            ";
+            let expected_errors = &["124..129: type A is not assignable to type B"];
+        }
+
+        fn test_can_not_use_self_type_in_parameters() {
+            let program = "
+                class a {
+                    a1(this: SELF_TYPE) : Int { 0 };
+                };
+            ";
+            let expected_errors = &["56..65: illegal use of SELF_TYPE"];
+        }
+
+        fn test_multiple_declarations_of_same_name_errors() {
+            let program = "
+                class A {
+                    attr : Int;
+                    attr : Int;
+
+                    method() : Int { 0 };
+                    method() : Int { 1 };
+                };
+                class A {};
+            ";
+            let expected_errors = &[
+                "217..218: class A already defined at 23..24",
+                "79..83: attribute with same name already defined at 47..51",
+                "154..160: method with same name already defined at 112..118",
+            ];
+        }
+
+        fn test_fails_to_inherit_class_with_undefined_name() {
+            let program = "
+                class A inherits Undefined {};
+            ";
+            let expected_errors = &["34..43: class Undefined is not defined"];
+        }
     );
 
     #[test]
@@ -1101,8 +1335,8 @@ mod tests {
             &i,
             &checker.errors,
             &[
-                "48..54: Entity already defined at 19..25",
-                "78..84: Object already defined at 0..0",
+                "48..54: class Entity already defined at 19..25",
+                "78..84: class Object already defined at 0..0",
             ],
         );
     }
@@ -1205,7 +1439,19 @@ mod tests {
                 other_definition_span,
             } => {
                 let name = i.get(name);
-                format!("{span}: {name} already defined at {other_definition_span}")
+                format!("{span}: class {name} already defined at {other_definition_span}")
+            }
+            Error::DuplicateMethodInClass {
+                other_definition_span,
+            } => {
+                format!("{span}: method with same name already defined at {other_definition_span}")
+            }
+            Error::DuplicateAttributeInClass {
+                other_definition_span,
+            } => {
+                format!(
+                    "{span}: attribute with same name already defined at {other_definition_span}"
+                )
             }
             Error::UndefinedType(name) => {
                 let name = i.get(name);
@@ -1226,6 +1472,9 @@ mod tests {
                 format!("{span}: expected type {expected}, but got {actual}")
             }
             Error::IllegalSelfType => format!("{span}: illegal use of SELF_TYPE"),
+            Error::MaximumNumberOfParametersExceeded { current } => {
+                format!("{span}: maximum number of parameters exceeded (current is {current})")
+            }
             Error::OverriddenWithIncorrectNumberOfParameters { actual, expected } => {
                 format!(
                     "{span}: overriding method of originally {expected} parameters, \
