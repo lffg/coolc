@@ -158,6 +158,9 @@ pub enum ExprKind<T = TypeName> {
         /// Non empty list of arms.
         arms: Vec<CaseArm<T>>,
     },
+    New {
+        ty: T,
+    },
     Unary {
         op: UnaryOperator,
         expr: Box<Expr<T>>,
@@ -190,7 +193,6 @@ pub struct CaseArm<T = TypeName> {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum UnaryOperator {
-    New,
     IsVoid,
     /// AKA Negation (of integers)
     Inverse,

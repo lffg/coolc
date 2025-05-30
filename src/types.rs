@@ -241,10 +241,14 @@ pub mod well_known {
     pub const SELF: Interned<str> = super::builtins::interned(9);
     pub const SELF_NAME: &str = "self";
 
+    pub const SELF_TYPE: Interned<str> = super::builtins::interned(10);
+    pub const SELF_TYPE_NAME: &str = "SELF_TYPE";
+
     pub const ALL: &[(Interned<str>, &str)] = &[
         (MAIN, MAIN_NAME),
         (MAIN_METHOD, MAIN_METHOD_NAME),
         (SELF, SELF_NAME),
+        (SELF_TYPE, SELF_TYPE_NAME),
     ];
 }
 

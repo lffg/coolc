@@ -269,13 +269,20 @@ impl Parser<'_, '_, '_> {
                 (ExprKind::Block { body }, span)
             }
 
+            // New: new ty
+            TokenKind::New => {
+                let ty = self.parse_type()?;
+                let new = ExprKind::New { ty };
+                let span = token.span().to(ty.span());
+                (new, span)
+            }
+
             // Prefix operators: ~, not, isvoid, new
-            kind @ (TokenKind::Tilde | TokenKind::Not | TokenKind::IsVoid | TokenKind::New) => {
+            kind @ (TokenKind::Tilde | TokenKind::Not | TokenKind::IsVoid) => {
                 let op = match kind {
                     TokenKind::Tilde => UnaryOperator::Inverse,
                     TokenKind::Not => UnaryOperator::Not,
                     TokenKind::IsVoid => UnaryOperator::IsVoid,
-                    TokenKind::New => UnaryOperator::New,
                     _ => unreachable!(),
                 };
                 // SAFETY: Should have prefix due to above match

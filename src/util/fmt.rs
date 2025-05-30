@@ -220,6 +220,10 @@ where
                 print_case_arm(w, idents, i + 1, arm)?;
             }
         }
+        ExprKind::New { ty: new_ty } => {
+            let new_ty = idents.get(new_ty);
+            write!(w, "new {new_ty} ({span}{ty})")?;
+        }
         ExprKind::Unary {
             op,
             expr: inner_expr,

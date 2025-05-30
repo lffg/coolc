@@ -174,42 +174,45 @@ impl Checker {
                     .collect();
                 (ExprKind::Case { predicate, arms }, lub)
             }
+            ExprKind::New { ty } => {
+                let ty = self.get_type_allowing_self_type(ty);
+                (ExprKind::New { ty: ty.clone() }, ty)
+            }
             ExprKind::Unary { op, expr } => {
-                let mut unary = |expr: Box<Expr<_>>, expected| {
-                    let expr = Box::new(self.check_expr(*expr));
+                let unary = |this: &mut Checker, expr: Box<Expr<_>>, expected| {
+                    let expr = Box::new(this.check_expr(*expr));
                     let ty = expr.ty.clone();
-                    self.assert_is_type(&ty, expected, expr.span);
+                    this.assert_is_type(&ty, expected, expr.span);
                     (ExprKind::Unary { op, expr }, ty)
                 };
 
                 match op {
-                    UnaryOperator::New => todo!(),
                     UnaryOperator::IsVoid => {
                         let expr = Box::new(self.check_expr(*expr));
                         let ty = self.must_get_type(builtins::BOOL);
                         (ExprKind::Unary { op, expr }, ty)
                     }
-                    UnaryOperator::Inverse => unary(expr, builtins::INT),
-                    UnaryOperator::Not => unary(expr, builtins::BOOL),
+                    UnaryOperator::Inverse => unary(self, expr, builtins::INT),
+                    UnaryOperator::Not => unary(self, expr, builtins::BOOL),
                 }
             }
             ExprKind::Binary { op, lhs, rhs } => {
-                let binary = |expected, ret| {
-                    let lhs = Box::new(self.check_expr(*lhs));
-                    let rhs = Box::new(self.check_expr(*rhs));
-                    self.assert_is_type(&lhs.ty, expected, lhs.span);
-                    self.assert_is_type(&rhs.ty, expected, rhs.span);
-                    (ExprKind::Binary { op, lhs, rhs }, self.must_get_type(ret))
+                let binary = |this: &mut Checker, expected, ret| {
+                    let lhs = Box::new(this.check_expr(*lhs));
+                    let rhs = Box::new(this.check_expr(*rhs));
+                    this.assert_is_type(&lhs.ty, expected, lhs.span);
+                    this.assert_is_type(&rhs.ty, expected, rhs.span);
+                    (ExprKind::Binary { op, lhs, rhs }, this.must_get_type(ret))
                 };
 
                 match op {
-                    BinaryOperator::Add => binary(builtins::INT, builtins::INT),
-                    BinaryOperator::Sub => binary(builtins::INT, builtins::INT),
-                    BinaryOperator::Mul => binary(builtins::INT, builtins::INT),
-                    BinaryOperator::Div => binary(builtins::INT, builtins::INT),
+                    BinaryOperator::Add => binary(self, builtins::INT, builtins::INT),
+                    BinaryOperator::Sub => binary(self, builtins::INT, builtins::INT),
+                    BinaryOperator::Mul => binary(self, builtins::INT, builtins::INT),
+                    BinaryOperator::Div => binary(self, builtins::INT, builtins::INT),
                     BinaryOperator::Eq => todo!(),
-                    BinaryOperator::Le => binary(builtins::INT, builtins::BOOL),
-                    BinaryOperator::Leq => binary(builtins::INT, builtins::BOOL),
+                    BinaryOperator::Le => binary(self, builtins::INT, builtins::BOOL),
+                    BinaryOperator::Leq => binary(self, builtins::INT, builtins::BOOL),
                 }
             }
             ExprKind::Paren(expr) => {
@@ -351,10 +354,31 @@ impl Checker {
     /// error at the provided span.
     fn get_type(&mut self, ty: TypeName) -> Type {
         self.registry.get(ty.name()).unwrap_or_else(|| {
-            self.errors
-                .push(ty.span().wrap(Error::UndefinedType(ty.name())));
+            let error = if ty.name() == well_known::SELF_TYPE {
+                Error::IllegalSelfType
+            } else {
+                Error::UndefinedType(ty.name())
+            };
+            self.errors.push(ty.span().wrap(error));
             self.registry.get(builtins::NO_TYPE).unwrap()
         })
+    }
+
+    /// Returns the corresponding type that should be in the type registry.
+    ///
+    /// This has the same behavior of [`Self::get_type`], but also allows the
+    /// resolution of [`well_known::SELF_TYPE`] as the type of the current
+    /// class.
+    ///
+    /// This is implemented in a separate function since the usage of
+    /// `SELF_TYPE` is more restricted than the one of a "regular type". I.e.,
+    /// `SELF_TYPE` is not allowed in all places in which a type can be used.
+    fn get_type_allowing_self_type(&mut self, ty: TypeName) -> Type {
+        if ty.name() == well_known::SELF_TYPE {
+            self.get_current_class()
+        } else {
+            self.get_type(ty)
+        }
     }
 
     /// Returns a type by its name, or panics.
@@ -432,7 +456,9 @@ impl Checker {
     }
 
     fn get_class_scope(&mut self, class: &ast::Class) -> Scope {
+        // self : SELF_TYPE
         let current_class = self.get_current_class();
+
         class
             .features
             .iter()
@@ -507,6 +533,7 @@ pub enum Error {
         actual: Interned<str>,
         expected: Interned<str>,
     },
+    IllegalSelfType,
 }
 
 type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
@@ -716,7 +743,6 @@ mod tests {
             ";
         }
 
-        // --- Combined Failing Binary Operator Test ---
         fn test_all_binary_operator_failures_in_block() {
             let expr = r#"
                 {
@@ -758,6 +784,26 @@ mod tests {
                 "459..464: expected type Int, but got Bool",
                 "496..499: expected type Int, but got String",
             ];
+        }
+
+        fn test_new_ok() {
+            let expr = "new String";
+
+            let tree_ok = "new String (0..10 %: String)";
+        }
+
+        fn test_new_self_type_ok() {
+            let program = "
+                class A {
+                  a() : A { new SELF_TYPE };
+                };
+            ";
+
+            let tree_ok = "
+                class A
+                  method a() : A
+                    new A (55..68 %: A)
+            ";
         }
     );
 
@@ -921,6 +967,7 @@ mod tests {
                 let expected = i.get(expected);
                 format!("{span}: expected type {expected}, but got {actual}")
             }
+            Error::IllegalSelfType => format!("{span}: illegal use of SELF_TYPE"),
         }
     }
 
