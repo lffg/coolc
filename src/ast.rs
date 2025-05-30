@@ -43,12 +43,12 @@
 
 use crate::{token::Span, types::builtins, util::intern::Interned};
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Default)]
 pub struct Program<T = TypeName> {
     pub classes: Vec<Class<T>>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Class<T = TypeName> {
     pub name: T,
     /// Actual inheritance can be accessed through [`TypedClass::name`]'s
@@ -59,20 +59,20 @@ pub struct Class<T = TypeName> {
     pub features: Vec<Feature<T>>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum Feature<T = TypeName> {
     Attribute(Binding<T>),
     Method(Method<T>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Binding<T = TypeName> {
     pub name: Ident,
     pub ty: T,
     pub initializer: Option<Expr<T>>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Method<T = TypeName> {
     pub name: Ident,
     /// List of parameters ("formal parameters").
@@ -81,6 +81,7 @@ pub struct Method<T = TypeName> {
     pub body: Expr<T>,
 }
 
+#[derive(Debug)]
 pub struct MethodSignature<T> {
     pub name: Ident,
     pub formals: Vec<Formal<T>>,
@@ -97,13 +98,13 @@ impl<T> From<Method<T>> for MethodSignature<T> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Formal<T = TypeName> {
     pub name: Ident,
     pub ty: T,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Expr<T = TypeName> {
     pub kind: ExprKind<T>,
     pub span: Span,
@@ -123,7 +124,7 @@ impl<T> Expr<T> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum ExprKind<T = TypeName> {
     Assignment {
         target: Ident,
@@ -178,20 +179,20 @@ pub enum ExprKind<T = TypeName> {
     Dummy,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct DispatchQualifier<T = TypeName> {
     pub expr: Box<Expr<T>>,
     pub ty: T,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct CaseArm<T = TypeName> {
     pub name: Ident,
     pub ty: T,
     pub body: Box<Expr<T>>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 pub enum UnaryOperator {
     IsVoid,
     /// AKA Negation (of integers)
@@ -199,7 +200,7 @@ pub enum UnaryOperator {
     Not,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 pub enum BinaryOperator {
     Add,
     Sub,
@@ -210,7 +211,7 @@ pub enum BinaryOperator {
     Leq,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 pub struct TypeName(pub Ident);
 
 impl Default for TypeName {
@@ -245,7 +246,7 @@ impl From<&TypeName> for Interned<str> {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 pub struct Ident {
     pub name: Interned<str>,
     pub span: Span,
