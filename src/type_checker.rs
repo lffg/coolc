@@ -197,22 +197,35 @@ impl Checker {
                 }
             }
             ExprKind::Binary { op, lhs, rhs } => {
-                let binary = |this: &mut Checker, expected, ret| {
-                    let lhs = Box::new(this.check_expr(*lhs));
-                    let rhs = Box::new(this.check_expr(*rhs));
-                    this.assert_is_type(&lhs.ty, expected, lhs.span);
-                    this.assert_is_type(&rhs.ty, expected, rhs.span);
-                    (ExprKind::Binary { op, lhs, rhs }, this.must_get_type(ret))
-                };
+                let binary =
+                    |this: &mut Checker, expected, lhs: Box<Expr<_>>, rhs: Box<Expr<_>>, ret| {
+                        let lhs = Box::new(this.check_expr(*lhs));
+                        let rhs = Box::new(this.check_expr(*rhs));
+                        this.assert_is_type(&lhs.ty, expected, lhs.span);
+                        this.assert_is_type(&rhs.ty, expected, rhs.span);
+                        (ExprKind::Binary { op, lhs, rhs }, this.must_get_type(ret))
+                    };
 
                 match op {
-                    BinaryOperator::Add => binary(self, builtins::INT, builtins::INT),
-                    BinaryOperator::Sub => binary(self, builtins::INT, builtins::INT),
-                    BinaryOperator::Mul => binary(self, builtins::INT, builtins::INT),
-                    BinaryOperator::Div => binary(self, builtins::INT, builtins::INT),
-                    BinaryOperator::Eq => todo!(),
-                    BinaryOperator::Le => binary(self, builtins::INT, builtins::BOOL),
-                    BinaryOperator::Leq => binary(self, builtins::INT, builtins::BOOL),
+                    BinaryOperator::Add => binary(self, builtins::INT, lhs, rhs, builtins::INT),
+                    BinaryOperator::Sub => binary(self, builtins::INT, lhs, rhs, builtins::INT),
+                    BinaryOperator::Mul => binary(self, builtins::INT, lhs, rhs, builtins::INT),
+                    BinaryOperator::Div => binary(self, builtins::INT, lhs, rhs, builtins::INT),
+                    BinaryOperator::Le => binary(self, builtins::INT, lhs, rhs, builtins::BOOL),
+                    BinaryOperator::Leq => binary(self, builtins::INT, lhs, rhs, builtins::BOOL),
+                    // Eq is handled specially in that a String, Int, or a Bool
+                    // can only be compared with another String, Int, or Bool
+                    // (respectively), but other types (which are all custom
+                    // classes) can be freely compared with other types.
+                    BinaryOperator::Eq => {
+                        let lhs = Box::new(self.check_expr(*lhs));
+                        let rhs = Box::new(self.check_expr(*rhs));
+                        if lhs.ty.is_primitive() || rhs.ty.is_primitive() {
+                            self.assert_is_type(&rhs.ty, lhs.ty.name(), rhs.span);
+                        }
+                        let ret = self.must_get_type(builtins::BOOL);
+                        (ExprKind::Binary { op, lhs, rhs }, ret)
+                    }
                 }
             }
             ExprKind::Paren(expr) => {
@@ -853,6 +866,60 @@ mod tests {
             ];
         }
 
+        fn test_eq_ok() {
+            let program = r#"
+                class A {};
+                class B {};
+
+                class Program {
+                  main() : Object {{
+                    1 = 2;
+                    true = false;
+                    "oi" = "tchau";
+                    new A = new A;
+                    new A = new B;
+                  }};
+                };
+            "#;
+            let tree_ok = r#"
+                class A
+                class B
+                class Program
+                  method main() : Object
+                    block (125..313 %: Bool)
+                      binary Eq (147..152 %: Bool)
+                        int 1 (147..148 %: Int)
+                        int 2 (151..152 %: Int)
+                      binary Eq (174..186 %: Bool)
+                        bool true (174..178 %: Bool)
+                        bool false (181..186 %: Bool)
+                      binary Eq (208..222 %: Bool)
+                        string "oi" (208..212 %: String)
+                        string "tchau" (215..222 %: String)
+                      binary Eq (244..257 %: Bool)
+                        new A (244..249 %: A)
+                        new A (252..257 %: A)
+                      binary Eq (279..292 %: Bool)
+                        new A (279..284 %: A)
+                        new B (287..292 %: B)
+            "#;
+        }
+
+        fn test_eq_error() {
+            let expr = r#"
+                {
+                  0 = false;
+                  "a" = 97;
+                  true = "verdadeiro";
+                }
+            "#;
+            let expected_errors = &[
+                "41..46: expected type Int, but got Bool",
+                "72..74: expected type String, but got Int",
+                "101..113: expected type Bool, but got String",
+            ];
+        }
+
         fn test_new_ok() {
             let expr = "new String";
 
@@ -1122,7 +1189,9 @@ pub mod test_utils {
             let expected = ::indoc::indoc! { $expected }.trim();
             let (i, typed_ast, actual_errors) = $ctx;
             let tree_str = typing_tests!(@@print_ast($kind), i, typed_ast);
-            assert_eq!(actual_errors.len(), 0);
+            let expected_errors: &[&str] = &[];
+            let errors: Vec<_> = actual_errors.iter().map(|e| fmt_error(&i, e)).collect();
+            assert_eq!(errors, expected_errors);
             ::pretty_assertions::assert_eq!(tree_str.trim(), expected);
         };
         (@@assertion($kind:ident, tree_with_error), $ctx:expr, $expected:expr) => {

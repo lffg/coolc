@@ -148,6 +148,13 @@ impl Type {
         curr.clone()
     }
 
+    /// Checks whether the type is primitive, i.e., `String`, `Int`, or `Bool`.
+    pub fn is_primitive(&self) -> bool {
+        self.name() == builtins::STRING
+            || self.name() == builtins::INT
+            || self.name() == builtins::BOOL
+    }
+
     pub fn name(&self) -> Interned<str> {
         self.0.name
     }

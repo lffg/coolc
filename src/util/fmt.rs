@@ -222,7 +222,7 @@ where
         }
         ExprKind::New { ty: new_ty } => {
             let new_ty = idents.get(new_ty);
-            write!(w, "new {new_ty} ({span}{ty})")?;
+            writeln!(w, "new {new_ty} ({span}{ty})")?;
         }
         ExprKind::Unary {
             op,
