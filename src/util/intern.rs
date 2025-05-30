@@ -39,6 +39,18 @@ impl<T: ?Sized> PartialEq for Interned<T> {
 
 impl<T: ?Sized> Eq for Interned<T> {}
 
+impl<T: ?Sized> PartialOrd for Interned<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: ?Sized> Ord for Interned<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.handle.cmp(&other.handle)
+    }
+}
+
 impl<T: ?Sized> fmt::Debug for Interned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Interned({})", self.handle)

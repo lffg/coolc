@@ -48,7 +48,7 @@ pub struct Program<T = TypeName> {
     pub classes: Vec<Class<T>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Class<T = TypeName> {
     pub name: T,
     /// Actual inheritance can be accessed through [`TypedClass::name`]'s
@@ -59,20 +59,30 @@ pub struct Class<T = TypeName> {
     pub features: Vec<Feature<T>>,
 }
 
-#[derive(Debug)]
+impl<T> Class<T> {
+    pub fn new_empty_with_name(name: T) -> Self {
+        Class {
+            name,
+            inherits: None,
+            features: Vec::with_capacity(0),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Feature<T = TypeName> {
     Attribute(Binding<T>),
     Method(Method<T>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Binding<T = TypeName> {
     pub name: Ident,
     pub ty: T,
     pub initializer: Option<Expr<T>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Method<T = TypeName> {
     pub name: Ident,
     /// List of parameters ("formal parameters").
@@ -81,30 +91,13 @@ pub struct Method<T = TypeName> {
     pub body: Expr<T>,
 }
 
-#[derive(Debug)]
-pub struct MethodSignature<T> {
-    pub name: Ident,
-    pub formals: Vec<Formal<T>>,
-    pub return_ty: T,
-}
-
-impl<T> From<Method<T>> for MethodSignature<T> {
-    fn from(method: Method<T>) -> Self {
-        MethodSignature {
-            name: method.name,
-            formals: method.formals,
-            return_ty: method.return_ty,
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Formal<T = TypeName> {
     pub name: Ident,
     pub ty: T,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expr<T = TypeName> {
     pub kind: ExprKind<T>,
     pub span: Span,
@@ -124,7 +117,7 @@ impl<T> Expr<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprKind<T = TypeName> {
     Assignment {
         target: Ident,
@@ -179,13 +172,13 @@ pub enum ExprKind<T = TypeName> {
     Dummy,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DispatchQualifier<T = TypeName> {
     pub expr: Box<Expr<T>>,
     pub ty: T,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CaseArm<T = TypeName> {
     pub name: Ident,
     pub ty: T,

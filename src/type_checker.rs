@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap, rc::Rc};
 
 use crate::{
     ast::{self, BinaryOperator, Expr, ExprKind, Program, TypeName, UnaryOperator},
@@ -11,8 +11,11 @@ pub type ParseResult<T> = Result<T, (T, Vec<Spanned<Error>>)>;
 
 pub struct Checker {
     registry: TypeRegistry,
-    methods: MethodsEnv,
+    /// O environment.
     scopes: Vec<HashMap<Interned<str>, Type>>,
+    /// M environment.
+    class_methods: MethodsEnv,
+    /// C environment.
     current_class: Interned<str>,
     errors: Vec<Spanned<Error>>,
 }
@@ -21,7 +24,7 @@ impl Checker {
     pub fn with_capacity(capacity: usize) -> Checker {
         Checker {
             registry: TypeRegistry::with_capacity(capacity),
-            methods: HashMap::with_capacity(/* will be built in-place */ 0),
+            class_methods: HashMap::with_capacity(0),
             scopes: Vec::with_capacity(24),
             current_class: builtins::NO_TYPE,
             errors: Vec::with_capacity(8),
@@ -253,30 +256,73 @@ impl Checker {
     }
 
     fn build_methods_env(&mut self, program: &Program) {
-        self.methods = program
-            .classes
-            .iter()
-            .flat_map(|class| Self::get_class_methods(class).map(move |method| (class, method)))
-            .map(|(class, method)| {
-                let key = MethodKey {
-                    class: self.get_type(class.name),
-                    name: method.name.name,
+        let classes: HashMap<_, _> = {
+            // We first create the environment with the builtins.
+            // For now, they don't have any methods.
+            let builtins = builtins::ALL.iter().map(|&(name, _, _)| {
+                let class = ast::Class::new_empty_with_name(TypeName::new(name, builtins::SPAN));
+                (name, Cow::Owned(class))
+            });
+            let user_defined = program
+                .classes
+                .iter()
+                .map(|class| (class.name.name(), Cow::Borrowed(class)));
+            builtins.chain(user_defined).collect()
+        };
+
+        for class in &program.classes {
+            let class_ty = self.get_type(class.name);
+            self.define_class_methods(&classes, &class_ty);
+        }
+    }
+
+    /// Define the methods map for a single class and all of its parents.
+    ///
+    /// Notice that this method doesn't perform any type checking besides
+    /// checking whether overridden signatures are compatible.
+    fn define_class_methods(
+        &mut self,
+        classes: &HashMap<Interned<str>, Cow<'_, ast::Class>>,
+        class_ty: &Type,
+    ) {
+        if self.class_methods.contains_key(&class_ty.name()) {
+            return; // Already defined methods for this class.
+        }
+
+        let inherited_methods = if let Some(parent_ty) = class_ty.parent() {
+            // If we have a parent, define its methods environment before the
+            // (current) child class.
+            self.define_class_methods(classes, parent_ty);
+            Rc::clone(&self.class_methods[&parent_ty.name()])
+        } else {
+            Rc::new(HashMap::with_capacity(0))
+        };
+
+        let class = &classes[&class_ty.name()];
+        let mut methods = Self::get_class_methods(class).peekable();
+
+        let methods_map = if methods.peek().is_none() {
+            // If this class doesn't define any new methods, we simply point to
+            // the parent's definition.
+            inherited_methods
+        } else {
+            let new_methods = methods.map(|method| {
+                let sig = MethodSignature {
+                    formals: method.formals.clone(),
+                    return_ty: method.return_ty,
                 };
-                let signature = ast::MethodSignature {
-                    name: method.name,
-                    formals: method
-                        .formals
-                        .iter()
-                        .map(|f| ast::Formal {
-                            name: f.name,
-                            ty: self.get_type(f.ty),
-                        })
-                        .collect(),
-                    return_ty: self.get_type(method.return_ty),
-                };
-                (key, signature)
-            })
-            .collect();
+                if let Some(parent_sig) = inherited_methods.get(&method.name.name) {
+                    self.assert_is_signature_match(&sig, parent_sig);
+                }
+                (method.name.name, sig)
+            });
+            let mut cloned_methods = HashMap::clone(&inherited_methods);
+            cloned_methods.extend(new_methods);
+            Rc::new(cloned_methods)
+        };
+
+        let old = self.class_methods.insert(class_ty.name(), methods_map);
+        assert!(old.is_none());
     }
 
     /// Scans through the program's source and records all classes in the
@@ -373,8 +419,19 @@ impl Checker {
                 Error::UndefinedType(ty.name())
             };
             self.errors.push(ty.span().wrap(error));
-            self.registry.get(builtins::NO_TYPE).unwrap()
+            self.must_get_type(builtins::NO_TYPE)
         })
+    }
+
+    /// Returns the corresponding type that should be in the type registry.
+    ///
+    /// If the type is not present, returns [`builtins::NO_TYPE`]. Notice that,
+    /// unlike [`Self::get_type`], this method does **NOT** registers any type
+    /// errors if the type is not defined.
+    fn get_type_no_error(&self, ty: TypeName) -> Type {
+        self.registry
+            .get(ty.name())
+            .unwrap_or_else(|| self.must_get_type(builtins::NO_TYPE))
     }
 
     /// Returns the corresponding type that should be in the type registry.
@@ -440,6 +497,47 @@ impl Checker {
                 actual: actual.name(),
                 expected,
             }));
+        }
+    }
+
+    /// Assert that two [`MethodSignature`]s match. Two signatures match if they
+    /// have the same number of formal parameters, and the same return type.
+    ///
+    /// Notice that no subtype relations are used here. The spec explicitly
+    /// requires an "exact" match.
+    ///
+    /// On a mismatch, the corresponding type error is registered. Notice that,
+    /// for error messages, the first method should be the scrutiny (the
+    /// overriding class), and the second should be the parent—which is being
+    /// overridden.
+    pub fn assert_is_signature_match(
+        &mut self,
+        child_sig: &MethodSignature,
+        parent_sig: &MethodSignature,
+    ) {
+        let actual = child_sig;
+        let expected = parent_sig;
+
+        for (actual, expected) in actual.formals.iter().zip(&expected.formals) {
+            let actual_ty = self.get_type_no_error(actual.ty);
+            let expected_ty = self.get_type_no_error(expected.ty);
+            if actual_ty != expected_ty {
+                let error = Error::OverriddenWithIncorrectParameterTypes {
+                    actual: actual_ty.name(),
+                    expected: expected_ty.name(),
+                };
+                self.errors.push(actual.ty.span().wrap(error));
+            }
+        }
+
+        let actual_ret = self.get_type_no_error(actual.return_ty);
+        let expected_ret = self.get_type_no_error(expected.return_ty);
+        if actual_ret != expected_ret {
+            let error = Error::OverriddenWithIncorrectReturnType {
+                actual: actual_ret.name(),
+                expected: expected_ret.name(),
+            };
+            self.errors.push(actual.return_ty.span().wrap(error));
         }
     }
 }
@@ -556,20 +654,37 @@ pub enum Error {
         expected: Interned<str>,
     },
     IllegalSelfType,
+    OverriddenWithIncorrectNumberOfParameters {
+        actual: u16,
+        expected: u16,
+    },
+    OverriddenWithIncorrectParameterTypes {
+        actual: Interned<str>,
+        expected: Interned<str>,
+    },
+    OverriddenWithIncorrectReturnType {
+        actual: Interned<str>,
+        expected: Interned<str>,
+    },
 }
 
 type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
 
-type MethodsEnv = HashMap<MethodKey, ast::MethodSignature<Type>>;
+/// Maps a class name to a map of methods, which maps a method name to its
+/// corresponding signature. We use a [`Rc`] to have COW semantics, such that a
+/// child class has the same method map from its parent unless the former
+/// defines a new method (which may even override some of the parent's methods).
+type MethodsEnv = HashMap<Interned<str>, Rc<HashMap<Interned<str>, MethodSignature>>>;
 
 type Scope = HashMap<Interned<str>, Type>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MethodKey {
-    /// Class in which the method is defined.
-    pub class: Type,
-    /// Method name.
-    pub name: Interned<str>,
+/// A method signature. Notice that formal parameters and the return use the
+/// nominal [`TypeName`] since when dispatching method, one needs to
+/// differentiate between an unresolved (nominal) `SELF_TYPE` and other types.
+#[derive(Debug, Clone)]
+pub struct MethodSignature {
+    pub formals: Vec<ast::Formal<TypeName>>,
+    pub return_ty: TypeName,
 }
 
 #[cfg(test)]
@@ -1028,7 +1143,7 @@ mod tests {
         checker.build_methods_env(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
-            fmt_methods(&i, &checker.methods),
+            fmt_methods(&i, &checker.class_methods),
             BTreeMap::from([
                 (
                     ("A", "a1"),
@@ -1043,30 +1158,40 @@ mod tests {
     }
 
     #[test]
-    fn test_build_methods_env_fails_upon_undefined_types() {
+    fn test_build_methods_env_considering_inheritance() {
         let (i, prog) = parse_program(
             "
             class A {
-                a1(a1p1 : String, a1p2 : Undefined1) : Int { 0 };
-                a2(a2p1 : Undefined2) : Int { 0 };
-                a3() : Undefined3 { 0 };
+                a1(a: String) : Int { 0 };
+            };
+            class B inherits A {
+                b1() : Int { 0 };
+            };
+            class C inherits A {};
+            class D inherits C {
+                a1(a: String) : Int { 1 };
+                d1(d: Int) : Int { 2 };
             };
             ",
         );
         let mut checker = Checker::with_capacity(16);
         checker.build_type_registry(&prog);
         checker.build_methods_env(&prog);
-        assert_errors(
-            &i,
-            &checker.errors,
-            &[
-                "64..74: class Undefined1 is not defined",
-                "115..125: class Undefined2 is not defined",
-                "163..173: class Undefined3 is not defined",
-            ],
+        assert!(checker.errors.is_empty());
+        assert_eq!(
+            fmt_methods(&i, &checker.class_methods),
+            BTreeMap::from([
+                (("A", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
+                (("B", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
+                (("B", "b1"), vec![("<ret>", "Int"),]),
+                (("C", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
+                (("D", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
+                (("D", "d1"), vec![("d", "Int"), ("<ret>", "Int")]),
+            ])
         );
     }
 
+    #[track_caller]
     fn assert_errors(i: &Interner<str>, actual: &[Spanned<Error>], expected: &[&str]) {
         let errors: Vec<_> = actual.iter().map(|e| fmt_error(i, e)).collect();
         assert_eq!(errors, expected);
@@ -1101,6 +1226,28 @@ mod tests {
                 format!("{span}: expected type {expected}, but got {actual}")
             }
             Error::IllegalSelfType => format!("{span}: illegal use of SELF_TYPE"),
+            Error::OverriddenWithIncorrectNumberOfParameters { actual, expected } => {
+                format!(
+                    "{span}: overriding method of originally {expected} parameters, \
+                    but new definition has {actual}"
+                )
+            }
+            Error::OverriddenWithIncorrectParameterTypes { actual, expected } => {
+                let actual = i.get(actual);
+                let expected = i.get(expected);
+                format!(
+                    "{span}: overriding method with incorrect parameter type: \
+                    expected type {expected}, but got {actual}"
+                )
+            }
+            Error::OverriddenWithIncorrectReturnType { actual, expected } => {
+                let actual = i.get(actual);
+                let expected = i.get(expected);
+                format!(
+                    "{span}: overriding method with incorrect return type: \
+                    expected type {expected}, but got {actual}"
+                )
+            }
         }
     }
 
@@ -1110,15 +1257,17 @@ mod tests {
     ) -> BTreeMap<(&'i str, &'i str), Vec<(&'i str, &'i str)>> {
         methods
             .iter()
-            .map(|(k, v)| {
-                let k = (i.get(k.class.name()), i.get(k.name));
-                let v = v
-                    .formals
-                    .iter()
-                    .map(|f| (i.get(f.name), i.get(f.ty.name())))
-                    .chain([("<ret>", i.get(v.return_ty.name()))])
-                    .collect();
-                (k, v)
+            .flat_map(|(class_name, class_methods)| {
+                class_methods.iter().map(move |(method_name, sig)| {
+                    let k = (i.get(class_name), i.get(method_name));
+                    let v = sig
+                        .formals
+                        .iter()
+                        .map(|f| (i.get(f.name), i.get(f.ty.name())))
+                        .chain([("<ret>", i.get(sig.return_ty.name()))])
+                        .collect();
+                    (k, v)
+                })
             })
             .collect()
     }
