@@ -492,6 +492,7 @@ impl Checker {
         (formals, scope)
     }
 
+    /// NOTE: Resolves bindings' types allowing for `SELF_TYPE`!
     fn get_typed_bindings_and_scope(
         &mut self,
         bindings: Vec<ast::Binding>,
@@ -500,7 +501,7 @@ impl Checker {
         let bindings = bindings
             .into_iter()
             .map(|binding| {
-                let ty = self.get_type(binding.ty);
+                let ty = self.get_type_allowing_self_type(binding.ty);
                 scope.insert(binding.name.name, ty.clone());
                 ast::Binding {
                     name: binding.name,
@@ -583,6 +584,19 @@ mod tests {
             let tree_ok = r#"string "hello!" (1..9 %: String)"#;
         }
 
+        fn test_self() {
+            let program = "
+                class A {
+                  a() : A { self };
+                };
+            ";
+            let tree_ok = "
+                class A
+                  method a() : A
+                    ident self (55..59 %: A)
+            ";
+        }
+
         fn test_let_ok() {
             let expr = "let a : Bool <- true in a";
             let tree_ok = "
@@ -591,6 +605,34 @@ mod tests {
                     bool true (16..20 %: Bool)
                   in
                     ident a (24..25 %: Bool)
+            ";
+        }
+
+        fn test_let_subtype_ok() {
+            let expr = "let a : Object <- 1 in a";
+            let tree_ok = "
+                let (0..24 %: Object)
+                  binding a: Object (initialized)
+                    int 1 (18..19 %: Int)
+                  in
+                    ident a (23..24 %: Object)
+            ";
+        }
+
+        fn test_let_ok_self_type() {
+            let program = "
+                class A {
+                  a() : A { let a : SELF_TYPE <- self in a };
+                };
+            ";
+            let tree_ok = "
+                class A
+                  method a() : A
+                    let (55..85 %: A)
+                      binding a: A (initialized)
+                        ident self (76..80 %: A)
+                      in
+                        ident a (84..85 %: A)
             ";
         }
 
@@ -798,7 +840,6 @@ mod tests {
                   a() : A { new SELF_TYPE };
                 };
             ";
-
             let tree_ok = "
                 class A
                   method a() : A
