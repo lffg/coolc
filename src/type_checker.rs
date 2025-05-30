@@ -415,6 +415,14 @@ impl Checker {
     /// See also [`Self::assert_is_subtype`].
     fn assert_is_type(&mut self, actual: &Type, expected: Interned<str>, span: Span) {
         if actual.name() != expected {
+            // This case is probably a consequence of a previous error, so we
+            // don't emit another error if that's the case.
+            if actual.name() == builtins::NO_TYPE {
+                // Just assumed that we have at least one error (which caused
+                // this one).
+                assert!(!self.errors.is_empty());
+                return;
+            }
             self.errors.push(span.wrap(Error::Mismatch {
                 actual: actual.name(),
                 expected,
@@ -617,6 +625,23 @@ mod tests {
                   in
                     ident a (23..24 %: Object)
             ";
+        }
+
+        fn test_no_propagation_of_no_type_error() {
+            let expr = "a + 1";
+            let expected_errors = &["0..1: a is not defined"];
+        }
+
+        // This is currently an error, but it should be a valid program!
+        // I am lazy.
+        fn test_multi_binding_let_ok() {
+            let expr = "
+              let a : Int <- 1,
+                  b : Int <- a + 1
+              in
+                a + b
+            ";
+            let expected_errors = &["62..63: a is not defined"];
         }
 
         fn test_let_ok_self_type() {
