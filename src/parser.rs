@@ -508,7 +508,7 @@ impl Parser<'_, '_, '_> {
             }
 
             other => {
-                let error = Error::UnexpectedOperator { got: other };
+                let error = Error::UnexpectedOperator { actual: other };
                 self.error(op_token.span().wrap(error));
                 return Err(());
             }
@@ -548,8 +548,8 @@ impl Parser<'_, '_, '_> {
                 // the end delimiter, we must return an error.
                 let c = self.peek();
                 self.error(c.span().wrap(Error::UnexpectedAny {
-                    got: c.kind,
-                    want: Box::from([separator, end_delim]),
+                    actual: c.kind,
+                    expected: Box::from([separator, end_delim]),
                 }));
             }
         }
@@ -728,8 +728,8 @@ impl Parser<'_, '_, '_> {
             Ok(c)
         } else {
             self.error(c.span().wrap(Error::Unexpected {
-                got: c.kind,
-                want: expect,
+                actual: c.kind,
+                expected: expect,
             }));
             Err(())
         }
@@ -745,8 +745,8 @@ impl Parser<'_, '_, '_> {
         }
         let c = self.peek();
         self.error(c.span().wrap(Error::UnexpectedAny {
-            got: c.kind,
-            want: Box::from(expect),
+            actual: c.kind,
+            expected: Box::from(expect),
         }));
         Err(())
     }
@@ -807,15 +807,15 @@ pub enum Error {
         token: TokenKind,
     },
     Unexpected {
-        got: TokenKind,
-        want: TokenKind,
+        actual: TokenKind,
+        expected: TokenKind,
     },
     UnexpectedAny {
-        got: TokenKind,
-        want: Box<[TokenKind]>,
+        actual: TokenKind,
+        expected: Box<[TokenKind]>,
     },
     UnexpectedOperator {
-        got: TokenKind,
+        actual: TokenKind,
     },
     EmptyProgram,
     EmptyBlockBody,
@@ -853,7 +853,7 @@ pub(crate) mod test_utils {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::fmt::print_expr_string;
+    use crate::util::fmt::tree::print_expr_string;
 
     use super::*;
 

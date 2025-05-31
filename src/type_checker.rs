@@ -1604,7 +1604,7 @@ mod tests {
         let mut checker = Checker::with_capacity(&mut i, 16);
         checker.build_type_registry(&prog);
         assert_errors(
-            &checker.ident_interner,
+            checker.ident_interner,
             &checker.errors,
             &[
                 "48..54: class Entity already defined at 19..25",
@@ -1623,7 +1623,7 @@ mod tests {
         let mut checker = Checker::with_capacity(&mut i, 16);
         checker.build_type_registry(&prog);
         assert_errors(
-            &checker.ident_interner,
+            checker.ident_interner,
             &checker.errors,
             &["35..49: class UndefinedClass is not defined"],
         );
@@ -1649,7 +1649,7 @@ mod tests {
         checker.build_methods_env(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
-            fmt_methods(&checker.ident_interner, &checker.class_methods),
+            fmt_methods(checker.ident_interner, &checker.class_methods),
             BTreeMap::from([
                 (
                     ("A", "a1"),
@@ -1685,7 +1685,7 @@ mod tests {
         checker.build_methods_env(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
-            fmt_methods(&checker.ident_interner, &checker.class_methods),
+            fmt_methods(checker.ident_interner, &checker.class_methods),
             BTreeMap::from([
                 (("A", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
                 (("B", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
@@ -1922,10 +1922,10 @@ pub mod test_utils {
         };
 
         (@@print_ast(expr), $interner:expr, $ast:expr) => {
-            crate::util::fmt::print_expr_string($interner, $ast)
+            crate::util::fmt::tree::print_expr_string($interner, $ast)
         };
         (@@print_ast(program), $interner:expr, $ast:expr) => {
-            crate::util::fmt::print_program_string($interner, $ast)
+            crate::util::fmt::tree::print_program_string($interner, $ast)
         };
     }
     pub(crate) use typing_tests;

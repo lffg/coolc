@@ -14,7 +14,7 @@ use cool::{
     parser,
     token::Spanned,
     util::{
-        fmt::{print_expr_string, print_program_string},
+        fmt::tree::{print_expr_string, print_program_string},
         intern::Interner,
     },
 };

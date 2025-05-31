@@ -5,17 +5,20 @@ use std::{
     io::{self, Write},
 };
 
-// Make sure these imports are correct based on your lib.rs structure
 use cool::{
     parser,
     token::{Spanned, Token},
     type_checker,
-    util::{fmt::print_program, intern::Interner},
+    util::{
+        self,
+        fmt::{tree::print_program, Show},
+        intern::Interner,
+    },
 };
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("Error: {error}"); // Use eprintln for errors
+        eprintln!("Error: {error}");
         std::process::exit(1);
     }
 }
@@ -83,7 +86,7 @@ fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<st
             print_program(&mut io::stdout(), ident_interner, &prog).unwrap();
             eprintln!();
             for error in errors {
-                report_error(src, &error);
+                report_error(src, &error, ident_interner);
             }
             return;
         }
@@ -98,7 +101,7 @@ fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<st
         Err((_prog, _registry, errors)) => {
             eprintln!("Got {} type errors", errors.len());
             for error in errors {
-                report_error(src, &error);
+                report_error(src, &error, ident_interner);
             }
             return;
         }
@@ -109,10 +112,11 @@ fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<st
     print_program(&mut io::stdout(), ident_interner, &typed_prog).unwrap();
 }
 
-// Helper function to report errors with context
-fn report_error<T: std::fmt::Debug>(src: &str, error: &Spanned<T>) {
+fn report_error<T>(src: &str, error: &Spanned<T>, ident_interner: &Interner<str>)
+where
+    Spanned<T>: Show,
+{
     let span = error.span;
-    let error = &error.inner;
 
     // Try to find line number and column
     let mut line = 1;
@@ -137,7 +141,9 @@ fn report_error<T: std::fmt::Debug>(src: &str, error: &Spanned<T>) {
         column = 1;
     }
 
-    eprintln!("Error (line {line}, col {column}): {error:?}");
+    let ctx = util::fmt::Context { ident_interner };
+    let error_display = error.display(&ctx);
+    eprintln!("Error (line {line}, col {column}): {error_display}");
 
     if let Some(line_content) = src.lines().nth(line - 1) {
         eprintln!("{line:>4} | {line_content}");
