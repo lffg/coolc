@@ -95,7 +95,9 @@ impl Span {
         &src[lo..hi]
     }
 
+    #[track_caller]
     pub fn wrap<T>(self, inner: T) -> Spanned<T> {
+        println!("{}", std::panic::Location::caller());
         Spanned { span: self, inner }
     }
 }

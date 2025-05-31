@@ -216,7 +216,7 @@ pub mod builtins {
     pub const BOOL_NAME: &str = "Bool";
 
     pub const IO: Interned<str> = interned(6);
-    pub const IO_NAME: &str = "Io";
+    pub const IO_NAME: &str = "IO";
 
     #[allow(clippy::type_complexity)]
     pub const ALL: &[(Interned<str>, &str, Option<Interned<str>>)] = &[
@@ -227,6 +227,73 @@ pub mod builtins {
         (BOOL, BOOL_NAME, Some(OBJECT)),
         (IO, IO_NAME, Some(OBJECT)),
     ];
+
+    pub mod methods {
+        define_methods! {
+            class Object {
+                abort() : Object;
+                type_name() : String;
+                copy() : SELF_TYPE;
+            };
+
+            class IO {
+                out_string(x: String) : SELF_TYPE;
+                out_int(x: Int) : SELF_TYPE;
+                in_string(): String;
+                in_int(): Int;
+            };
+
+            class String {
+                length() : Int;
+                concat(s: String) : String;
+                substr(i: Int, l: Int) : String;
+            };
+        }
+
+        macro_rules! define_methods {
+            (
+                $(
+                    class $class_name:ident {
+                        $(
+                            $method:ident ($($arg_name:ident : $arg_ty:ty),*) : $ret_ty:ident ;
+                        )*
+                    };
+                )*
+            ) => {
+                pub const ALL: &[ClassMethods] = &[
+                    $(
+                        ClassMethods {
+                            class: stringify!($class_name),
+                            methods: &[
+                                $(
+                                    Method {
+                                        name: stringify!($method),
+                                        args: &[
+                                            $((stringify!($arg_name), stringify!($arg_ty)),)*
+                                        ],
+                                        ret: stringify!($ret_ty),
+                                    },
+                                )*
+                            ]
+                        },
+                    )*
+                ];
+            };
+        }
+        use define_methods;
+
+        pub struct ClassMethods {
+            class: &'static str,
+            methods: &'static [Method],
+        }
+
+        pub struct Method {
+            name: &'static str,
+            /// Slice of (NAME, TYPE) tuples
+            args: &'static [(&'static str, &'static str)],
+            ret: &'static str,
+        }
+    }
 
     pub(super) const fn interned(n: u32) -> Interned<str> {
         Interned::unchecked_new(std::num::NonZeroU32::new(n).unwrap())
