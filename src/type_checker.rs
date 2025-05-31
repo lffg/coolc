@@ -411,7 +411,7 @@ impl Checker<'_> {
             builtins.chain(user_defined).collect()
         };
 
-        for class in &program.classes {
+        for class in classes.values() {
             let class_ty = self.get_type(class.name);
             self.define_class_methods(&classes, &class_ty);
         }
