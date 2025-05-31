@@ -113,8 +113,12 @@ impl Checker {
     }
 
     fn check_binding(&mut self, binding: ast::Binding) -> ast::Binding<Type> {
-        let ty = self.get_type(binding.ty);
-        let initializer = binding.initializer.map(|expr| self.check_expr(expr));
+        let ty = self.get_type_allowing_self_type(binding.ty);
+        let initializer = binding.initializer.map(|expr| {
+            let expr = self.check_expr(expr);
+            self.assert_is_subtype(&expr.ty, &ty, expr.span);
+            expr
+        });
         ast::Binding {
             name: binding.name,
             ty,
@@ -636,7 +640,10 @@ impl Checker {
             .iter()
             .filter_map(|feature| {
                 if let ast::Feature::Attribute(binding) = feature {
-                    Some((binding.name.name, self.get_type(binding.ty)))
+                    Some((
+                        binding.name.name,
+                        self.get_type_allowing_self_type(binding.ty),
+                    ))
                 } else {
                     None
                 }
@@ -1286,6 +1293,34 @@ mod tests {
                 class A inherits Undefined {};
             ";
             let expected_errors = &["34..43: class Undefined is not defined"];
+        }
+
+        fn test_attribute_scope_ok() {
+            // Operationally, accessing `b` in `b`'s initializer uses the
+            // default value for that type (`0` in the case of `Int`s).
+            let program = "
+                class A {
+                    a : Int <- 1;
+                    b : Int <- a + b + c;
+                    c : Int <- 3;
+                    d : SELF_TYPE <- self;
+                };
+            ";
+            let tree_ok = "
+                class A
+                  attribute a: Int (initialized)
+                    int 1 (58..59 %: Int)
+                  attribute b: Int (initialized)
+                    binary Add (92..101 %: Int)
+                      binary Add (92..97 %: Int)
+                        ident a (92..93 %: Int)
+                        ident b (96..97 %: Int)
+                      ident c (100..101 %: Int)
+                  attribute c: Int (initialized)
+                    int 3 (134..135 %: Int)
+                  attribute d: A (initialized)
+                    ident self (174..178 %: A)
+            ";
         }
     );
 
