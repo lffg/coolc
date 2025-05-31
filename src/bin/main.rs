@@ -92,7 +92,7 @@ fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<st
     println!("=== Untyped AST ===");
     print_program(&mut io::stdout(), ident_interner, &prog).unwrap();
 
-    let checker = type_checker::Checker::with_capacity(512);
+    let checker = type_checker::Checker::with_capacity(ident_interner, 512);
     let (typed_prog, _registry) = match checker.check(prog) {
         Ok(prog) => prog,
         Err((_prog, _registry, errors)) => {

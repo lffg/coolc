@@ -192,45 +192,152 @@ struct TypeInner {
 ///
 /// See also [`well_known`].
 pub mod builtins {
-    use crate::{token::Span, util::intern::Interned};
+    use crate::{
+        ast::{self, Ident, TypeName},
+        token::Span,
+        util::intern::{Interned, Interner},
+    };
 
     pub const SPAN: Span = Span::new_of_length(0, 0);
 
-    /// Top-type (supertype of all types)
-    pub const OBJECT: Interned<str> = interned(1);
-    pub const OBJECT_NAME: &str = "Object";
+    define_methods! {
+        class OBJECT("Object", 1) inherits None {
+            abort() : Object;
+            type_name() : String;
+            copy() : SELF_TYPE;
+        };
 
-    /// Bottom-type (subtype of all types)
-    ///
-    /// Treated specially in [`crate::types::Type::is_subtype_of`].
-    pub const NO_TYPE: Interned<str> = interned(2);
-    pub const NO_TYPE_NAME: &str = "<no-type>";
+        class NO_TYPE("<no-type>", 2) inherits OBJECT {};
 
-    pub const STRING: Interned<str> = interned(3);
-    pub const STRING_NAME: &str = "String";
+        class STRING("String", 3) inherits OBJECT {
+            length() : Int;
+            concat(s: String) : String;
+            substr(i: Int, l: Int) : String;
+        };
 
-    pub const INT: Interned<str> = interned(4);
-    pub const INT_NAME: &str = "Int";
+        class INT("Int", 4) inherits OBJECT {};
 
-    pub const BOOL: Interned<str> = interned(5);
-    pub const BOOL_NAME: &str = "Bool";
+        class BOOL("Bool", 5) inherits OBJECT {};
 
-    pub const IO: Interned<str> = interned(6);
-    pub const IO_NAME: &str = "Io";
+        class IO("IO", 6) inherits OBJECT {
+            out_string(x: String) : SELF_TYPE;
+            out_int(x: Int) : SELF_TYPE;
+            in_string(): String;
+            in_int(): Int;
+        };
+    }
 
-    #[allow(clippy::type_complexity)]
-    pub const ALL: &[(Interned<str>, &str, Option<Interned<str>>)] = &[
-        (OBJECT, OBJECT_NAME, None),
-        (NO_TYPE, NO_TYPE_NAME, Some(OBJECT)),
-        (STRING, STRING_NAME, Some(OBJECT)),
-        (INT, INT_NAME, Some(OBJECT)),
-        (BOOL, BOOL_NAME, Some(OBJECT)),
-        (IO, IO_NAME, Some(OBJECT)),
-    ];
+    pub struct BuiltInClass {
+        pub id: Interned<str>,
+        pub inherits: Option<Interned<str>>,
+        pub name: &'static str,
+        methods: &'static [BuiltInMethod],
+    }
+
+    impl BuiltInClass {
+        pub fn build_ast(&self, i: &mut Interner<str>) -> ast::Class<TypeName> {
+            fn ident(i: &mut Interner<str>, s: &str) -> Ident {
+                let name = i.intern(s);
+                Ident { name, span: SPAN }
+            }
+
+            fn type_name(i: &mut Interner<str>, s: &str) -> TypeName {
+                TypeName(ident(i, s))
+            }
+
+            ast::Class {
+                name: TypeName::new(self.id, SPAN),
+                inherits: self.inherits.map(|i| TypeName::new(i, SPAN)),
+                features: self
+                    .methods
+                    .iter()
+                    .map(|m| {
+                        ast::Feature::Method(ast::Method {
+                            name: ident(i, m.name),
+                            formals: m
+                                .args
+                                .iter()
+                                .map(|(name, ty)| ast::Formal {
+                                    name: ident(i, name),
+                                    ty: type_name(i, ty),
+                                })
+                                .collect(),
+                            return_ty: type_name(i, m.ret),
+                            body: ast::Expr {
+                                kind: ast::ExprKind::Dummy,
+                                span: SPAN,
+                                ty: TypeName::default(),
+                            },
+                        })
+                    })
+                    .collect(),
+            }
+        }
+    }
+
+    pub struct BuiltInMethod {
+        name: &'static str,
+        /// Slice of (NAME, TYPE) tuples
+        args: &'static [(&'static str, &'static str)],
+        ret: &'static str,
+    }
 
     pub(super) const fn interned(n: u32) -> Interned<str> {
         Interned::unchecked_new(std::num::NonZeroU32::new(n).unwrap())
     }
+
+    macro_rules! define_methods {
+        (
+            $(
+                class
+                    $builtin_ident:ident($class_name:expr, $interned_handle:expr)
+                    inherits $inherited:ident
+                {
+                    $(
+                        $method:ident ($($arg_name:ident : $arg_ty:ty),*) : $ret_ty:ident ;
+                    )*
+                };
+            )*
+        ) => {
+            $(
+                pub const $builtin_ident: Interned<str> =
+                    crate::types::builtins::interned($interned_handle);
+            )*
+
+            pub const ALL: &[&BuiltInClass] = &[
+                $(&crate::types::builtins::classes::$builtin_ident,)*
+            ];
+
+            pub mod classes {
+                use super::*;
+
+                $(
+                    #[allow(non_upper_case_globals)]
+                    pub static $builtin_ident: BuiltInClass = BuiltInClass {
+                        id: crate::types::builtins::$builtin_ident,
+                        inherits: define_methods!(@@inherits, $inherited),
+                        name: $class_name,
+                        methods: &[
+                            $(
+                                BuiltInMethod {
+                                    name: stringify!($method),
+                                    args: &[
+                                        $((stringify!($arg_name), stringify!($arg_ty)),)*
+                                    ],
+                                    ret: stringify!($ret_ty),
+                                },
+                            )*
+                        ],
+                    };
+                )*
+            }
+        };
+        (@@inherits, None) => { None };
+        (@@inherits, $name:ident) => {
+            Some(crate::types::builtins::$name)
+        };
+    }
+    use define_methods;
 }
 
 /// Well known names, which are always implicitly interned.

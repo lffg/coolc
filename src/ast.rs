@@ -59,16 +59,6 @@ pub struct Class<T = TypeName> {
     pub features: Vec<Feature<T>>,
 }
 
-impl<T> Class<T> {
-    pub fn new_empty_with_name(name: T) -> Self {
-        Class {
-            name,
-            inherits: None,
-            features: Vec::with_capacity(0),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Feature<T = TypeName> {
     Attribute(Binding<T>),

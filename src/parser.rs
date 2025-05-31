@@ -47,9 +47,9 @@ fn parse<'src, 'tok, 'ident, T>(
 
     if ident_interner.is_empty() {
         // Register builtin and well-known names
-        for &(expected_handle, name, _) in builtins::ALL {
-            let handle = ident_interner.intern(name);
-            assert_eq!(handle, expected_handle);
+        for builtin in builtins::ALL {
+            let handle = ident_interner.intern(builtin.name);
+            assert_eq!(handle, builtin.id);
         }
         for &(expected_handle, name) in well_known::ALL {
             let handle = ident_interner.intern(name);

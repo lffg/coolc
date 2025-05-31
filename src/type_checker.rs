@@ -4,12 +4,12 @@ use crate::{
     ast::{self, BinaryOperator, Expr, ExprKind, Program, TypeName, UnaryOperator},
     token::{Span, Spanned},
     types::{builtins, well_known, Type, TypeRegistry},
-    util::intern::Interned,
+    util::intern::{Interned, Interner},
 };
 
 pub type ParseResult<T> = Result<T, (T, Vec<Spanned<Error>>)>;
 
-pub struct Checker {
+pub struct Checker<'ident> {
     registry: TypeRegistry,
     /// O environment.
     scopes: Vec<HashMap<Interned<str>, Type>>,
@@ -18,16 +18,18 @@ pub struct Checker {
     /// C environment.
     current_class: Interned<str>,
     errors: Vec<Spanned<Error>>,
+    ident_interner: &'ident mut Interner<str>,
 }
 
-impl Checker {
-    pub fn with_capacity(capacity: usize) -> Checker {
+impl Checker<'_> {
+    pub fn with_capacity(ident_interner: &mut Interner<str>, capacity: usize) -> Checker<'_> {
         Checker {
             registry: TypeRegistry::with_capacity(capacity),
             class_methods: HashMap::with_capacity(0),
             scopes: Vec::with_capacity(24),
             current_class: builtins::NO_TYPE,
             errors: Vec::with_capacity(8),
+            ident_interner,
         }
     }
 
@@ -398,9 +400,9 @@ impl Checker {
         let classes: HashMap<_, _> = {
             // We first create the environment with the builtins.
             // For now, they don't have any methods.
-            let builtins = builtins::ALL.iter().map(|&(name, _, _)| {
-                let class = ast::Class::new_empty_with_name(TypeName::new(name, builtins::SPAN));
-                (name, Cow::Owned(class))
+            let builtins = builtins::ALL.iter().map(|builtin| {
+                let ast = builtin.build_ast(self.ident_interner);
+                (builtin.id, Cow::Owned(ast))
             });
             let user_defined = program
                 .classes
@@ -483,9 +485,11 @@ impl Checker {
         //
         // This will also help preventing built-in redefinition due to the
         // check in the next section.
-        for &(ty, _, parent) in builtins::ALL {
-            let parent = parent.map(|name| TypeName::new(name, builtins::SPAN));
-            discovered.insert(ty, (builtins::SPAN, parent));
+        for builtin in builtins::ALL {
+            let parent = builtin
+                .inherits
+                .map(|name| TypeName::new(name, builtins::SPAN));
+            discovered.insert(builtin.id, (builtins::SPAN, parent));
         }
 
         // Build the map from the source and report any duplicate type
@@ -697,7 +701,7 @@ impl Checker {
 }
 
 // Utility functions
-impl Checker {
+impl Checker<'_> {
     /// Looks up in the scope stack, or returns [`builtins::NO_TYPE`] with a
     /// registered error if not find.
     fn lookup_scope(&mut self, ident: &ast::Ident) -> Type {
@@ -1559,7 +1563,7 @@ mod tests {
 
     #[test]
     fn test_build_type_registry() {
-        let (i, prog) = parse_program(
+        let (mut i, prog) = parse_program(
             "
             class Entity {};
             class Mob inherits Entity {};
@@ -1567,14 +1571,14 @@ mod tests {
             class Block inherits Entity {};
             ",
         );
-        let mut checker = Checker::with_capacity(16);
+        let mut checker = Checker::with_capacity(&mut i, 16);
         checker.build_type_registry(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
             checker.registry.hierarchy(&i),
             BTreeMap::from([
                 ("Cow", vec!["Cow", "Mob", "Entity", "Object"]),
-                ("Io", vec!["Io", "Object"]),
+                ("IO", vec!["IO", "Object"]),
                 ("String", vec!["String", "Object"]),
                 ("Int", vec!["Int", "Object"]),
                 ("Bool", vec!["Bool", "Object"]),
@@ -1589,7 +1593,7 @@ mod tests {
 
     #[test]
     fn test_build_type_registry_fails_with_duplicate_class() {
-        let (i, prog) = parse_program(
+        let (mut i, prog) = parse_program(
             "
             class Entity {};
             class Entity {};
@@ -1597,10 +1601,10 @@ mod tests {
             class Object {};
             ",
         );
-        let mut checker = Checker::with_capacity(16);
+        let mut checker = Checker::with_capacity(&mut i, 16);
         checker.build_type_registry(&prog);
         assert_errors(
-            &i,
+            &checker.ident_interner,
             &checker.errors,
             &[
                 "48..54: class Entity already defined at 19..25",
@@ -1611,15 +1615,15 @@ mod tests {
 
     #[test]
     fn test_build_type_registry_fails_with_undefined_type() {
-        let (i, prog) = parse_program(
+        let (mut i, prog) = parse_program(
             "
             class Entity inherits UndefinedClass {};
             ",
         );
-        let mut checker = Checker::with_capacity(16);
+        let mut checker = Checker::with_capacity(&mut i, 16);
         checker.build_type_registry(&prog);
         assert_errors(
-            &i,
+            &checker.ident_interner,
             &checker.errors,
             &["35..49: class UndefinedClass is not defined"],
         );
@@ -1627,7 +1631,7 @@ mod tests {
 
     #[test]
     fn test_build_methods_env() {
-        let (i, prog) = parse_program(
+        let (mut i, prog) = parse_program(
             "
             class A {
                 a1(a1p1 : String, a1p2 : String) : Int { 0 };
@@ -1640,12 +1644,12 @@ mod tests {
             };
             ",
         );
-        let mut checker = Checker::with_capacity(16);
+        let mut checker = Checker::with_capacity(&mut i, 16);
         checker.build_type_registry(&prog);
         checker.build_methods_env(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
-            fmt_methods(&i, &checker.class_methods),
+            fmt_methods(&checker.ident_interner, &checker.class_methods),
             BTreeMap::from([
                 (
                     ("A", "a1"),
@@ -1661,7 +1665,7 @@ mod tests {
 
     #[test]
     fn test_build_methods_env_considering_inheritance() {
-        let (i, prog) = parse_program(
+        let (mut i, prog) = parse_program(
             "
             class A {
                 a1(a: String) : Int { 0 };
@@ -1676,12 +1680,12 @@ mod tests {
             };
             ",
         );
-        let mut checker = Checker::with_capacity(16);
+        let mut checker = Checker::with_capacity(&mut i, 16);
         checker.build_type_registry(&prog);
         checker.build_methods_env(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
-            fmt_methods(&i, &checker.class_methods),
+            fmt_methods(&checker.ident_interner, &checker.class_methods),
             BTreeMap::from([
                 (("A", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
                 (("B", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
@@ -1783,15 +1787,19 @@ mod tests {
         methods
             .iter()
             .flat_map(|(class_name, class_methods)| {
-                class_methods.iter().map(move |(method_name, sig)| {
-                    let k = (i.get(class_name), i.get(method_name));
+                class_methods.iter().filter_map(move |(method_name, sig)| {
+                    let name = i.get(method_name);
+                    if name == "abort" || name == "type_name" || name == "copy" {
+                        return None;
+                    }
+                    let k = (i.get(class_name), name);
                     let v = sig
                         .formals
                         .iter()
                         .map(|f| (i.get(f.name), i.get(f.ty.name())))
                         .chain([("<ret>", i.get(sig.return_ty.name()))])
                         .collect();
-                    (k, v)
+                    Some((k, v))
                 })
             })
             .collect()
@@ -1812,8 +1820,8 @@ pub mod test_utils {
             $(
                 #[test]
                 fn $test_name() {
-                    let (interner, untyped_ast) = typing_tests!(@@get_ast($kind), $source);
-                    let checker = crate::type_checker::Checker::with_capacity(32);
+                    let (mut interner, untyped_ast) = typing_tests!(@@get_ast($kind), $source);
+                    let checker = crate::type_checker::Checker::with_capacity(&mut interner, 32);
                     let check_result = typing_tests!(@@check($kind), checker, untyped_ast);
                     let (typed_ast, _registry, errors) = match check_result {
                         Ok((typed_ast, registry)) => (typed_ast, registry, vec![]),
