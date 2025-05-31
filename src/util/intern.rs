@@ -1,10 +1,20 @@
-use std::{collections::HashMap, fmt, hash::Hash, marker::PhantomData, rc::Rc};
+use std::{collections::HashMap, fmt, hash::Hash, marker::PhantomData, num::NonZeroU32, rc::Rc};
 
 /// A handle to some interned value of type `T`. To retrieve a `&T`, use
 /// [`Interner::get`].
 pub struct Interned<T: ?Sized> {
-    handle: u32,
+    // Here we use a NonZeroU32 to leverage niche layout optimization.
+    handle: NonZeroU32,
     _ty: PhantomData<T>,
+}
+
+impl<T: ?Sized> Interned<T> {
+    pub(crate) const fn unchecked_new(handle: NonZeroU32) -> Self {
+        Interned {
+            handle,
+            _ty: PhantomData,
+        }
+    }
 }
 
 impl<T: ?Sized> Copy for Interned<T> {}
@@ -12,6 +22,12 @@ impl<T: ?Sized> Copy for Interned<T> {}
 impl<T: ?Sized> Clone for Interned<T> {
     fn clone(&self) -> Self {
         *self
+    }
+}
+
+impl<T: ?Sized> Hash for Interned<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.handle.hash(state);
     }
 }
 
@@ -23,24 +39,44 @@ impl<T: ?Sized> PartialEq for Interned<T> {
 
 impl<T: ?Sized> Eq for Interned<T> {}
 
+impl<T: ?Sized> PartialOrd for Interned<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: ?Sized> Ord for Interned<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.handle.cmp(&other.handle)
+    }
+}
+
 impl<T: ?Sized> fmt::Debug for Interned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Interned({})", self.handle)
     }
 }
 
-impl<T: ?Sized> Interned<T> {
-    const fn new(handle: u32) -> Self {
-        Interned {
-            handle,
-            _ty: PhantomData,
-        }
+impl<T: ?Sized> From<&Interned<T>> for Interned<T> {
+    fn from(value: &Interned<T>) -> Self {
+        *value
     }
 }
 
 pub struct Interner<T: ?Sized> {
-    map: HashMap<Rc<T>, u32>,
+    map: HashMap<Rc<T>, NonZeroU32>,
     vec: Vec<Rc<T>>,
+}
+
+impl fmt::Debug for Interner<str> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut map = f.debug_map();
+        for (i, interned) in self.vec.iter().enumerate() {
+            let i = i + 1;
+            map.entry(&i, &interned);
+        }
+        map.finish()
+    }
 }
 
 impl<T: ?Sized> Interner<T> {
@@ -49,6 +85,10 @@ impl<T: ?Sized> Interner<T> {
             map: HashMap::with_capacity(capacity),
             vec: Vec::with_capacity(capacity),
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty() && self.vec.is_empty()
     }
 
     pub fn clear(&mut self) {
@@ -65,20 +105,25 @@ impl<T: ?Sized> Interner<T> {
         T::Owned: Into<Rc<T>>,
     {
         if let Some(handle) = self.map.get(value) {
-            return Interned::new(*handle);
+            return Interned::unchecked_new(*handle);
         }
         let key: Rc<T> = value.to_owned().into();
-        let i: u32 = self.vec.len().try_into().expect("interned out of capacity");
+        let i = {
+            let len = u32::try_from(self.vec.len()).expect("interned out of capacity");
+            // SAFETY: This will never be zero due to the +1.
+            unsafe { NonZeroU32::new_unchecked(len + 1) }
+        };
         self.vec.push(Rc::clone(&key));
         self.map.insert(key, i);
-        Interned::new(i)
+        Interned::unchecked_new(i)
     }
 
     /// Returns the corresponding value for the provided [`Interned`] handle.
     /// Panics if not found.
     pub fn get(&self, handle: impl Into<Interned<T>>) -> &T {
-        let handle = handle.into().handle as usize;
-        &self.vec[handle]
+        let handle: Interned<T> = handle.into();
+        let handle = handle.handle.get() - 1;
+        &self.vec[handle as usize]
     }
 }
 

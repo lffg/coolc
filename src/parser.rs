@@ -1,10 +1,11 @@
 use crate::{
     ast::{
         BinaryOperator, Binding, CaseArm, Class, DispatchQualifier, Expr, ExprKind, Feature,
-        Formal, Ident, Program, TypeName, UnaryOperator,
+        Formal, Ident, Method, Program, TypeName, UnaryOperator,
     },
     lexer::{self, extract},
     token::{Span, Spanned, Token, TokenKind},
+    types::{builtins, well_known},
     util::intern::Interner,
 };
 
@@ -22,7 +23,7 @@ pub fn parse_program(
         tokens,
         ident_interner,
         Parser::parse_program,
-        Program::dummy,
+        Program::default,
     )
 }
 
@@ -43,6 +44,18 @@ fn parse<'src, 'tok, 'ident, T>(
     default: impl FnOnce() -> T,
 ) -> ParseResult<T> {
     assert!(tokens.is_empty());
+
+    if ident_interner.is_empty() {
+        // Register builtin and well-known names
+        for &(expected_handle, name, _) in builtins::ALL {
+            let handle = ident_interner.intern(name);
+            assert_eq!(handle, expected_handle);
+        }
+        for &(expected_handle, name) in well_known::ALL {
+            let handle = ident_interner.intern(name);
+            assert_eq!(handle, expected_handle);
+        }
+    }
 
     // Lex and parse
     lexer::lex(src, tokens);
@@ -137,12 +150,12 @@ impl Parser<'_, '_, '_> {
                 self.consume(TokenKind::LBrace)?;
                 let body = self.parse_expr()?;
                 self.consume(TokenKind::RBrace)?;
-                Ok(Feature::Method {
+                Ok(Feature::Method(Method {
                     name,
                     formals,
                     return_ty,
                     body,
-                })
+                }))
             }
             _ => unreachable!(),
         }
@@ -256,13 +269,20 @@ impl Parser<'_, '_, '_> {
                 (ExprKind::Block { body }, span)
             }
 
+            // New: new ty
+            TokenKind::New => {
+                let ty = self.parse_type()?;
+                let new = ExprKind::New { ty };
+                let span = token.span().to(ty.span());
+                (new, span)
+            }
+
             // Prefix operators: ~, not, isvoid, new
-            kind @ (TokenKind::Tilde | TokenKind::Not | TokenKind::IsVoid | TokenKind::New) => {
+            kind @ (TokenKind::Tilde | TokenKind::Not | TokenKind::IsVoid) => {
                 let op = match kind {
                     TokenKind::Tilde => UnaryOperator::Inverse,
                     TokenKind::Not => UnaryOperator::Not,
                     TokenKind::IsVoid => UnaryOperator::IsVoid,
-                    TokenKind::New => UnaryOperator::New,
                     _ => unreachable!(),
                 };
                 // SAFETY: Should have prefix due to above match
@@ -357,7 +377,11 @@ impl Parser<'_, '_, '_> {
             }
         };
 
-        Ok(Expr { kind, span })
+        Ok(Expr {
+            kind,
+            span,
+            ty: TypeName::default(),
+        })
     }
 
     /// led: Parses tokens that follow a left-hand-side expression
@@ -487,7 +511,11 @@ impl Parser<'_, '_, '_> {
             }
         };
 
-        Ok(Expr { kind, span })
+        Ok(Expr {
+            kind,
+            span,
+            ty: TypeName::default(),
+        })
     }
 
     /// Parses `item (delim item)*` until `end_delim` is found. Does **NOT**
@@ -600,7 +628,7 @@ impl Parser<'_, '_, '_> {
         let start_span = name.span;
         self.consume(TokenKind::Colon)?;
         let ty = self.parse_type()?;
-        self.consume(TokenKind::Assign)?;
+        self.consume(TokenKind::FatArrow)?;
         let body = self.parse_expr()?;
 
         let span = start_span.to(body.span);
@@ -624,7 +652,7 @@ impl Parser<'_, '_, '_> {
             tokens,
             ident_interner,
             cursor: 0,
-            errors: Vec::new(),
+            errors: Vec::with_capacity(8),
         };
         p.setup();
         p
@@ -798,6 +826,25 @@ pub enum Error {
 impl From<std::num::ParseIntError> for Error {
     fn from(_: std::num::ParseIntError) -> Self {
         Error::ParseInt
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_utils {
+    use super::*;
+
+    pub fn parse_program(src: &str) -> (Interner<str>, Program) {
+        let mut i = Interner::with_capacity(32);
+        let prog = super::parse_program(src, &mut Vec::with_capacity(512), &mut i)
+            .expect("failed to parse");
+        (i, prog)
+    }
+
+    pub fn parse_expr(src: &str) -> (Interner<str>, Expr) {
+        let mut i = Interner::with_capacity(32);
+        let prog =
+            super::parse_expr(src, &mut Vec::with_capacity(512), &mut i).expect("failed to parse");
+        (i, prog)
     }
 }
 

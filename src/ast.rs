@@ -41,112 +41,130 @@
 // not
 // <-
 
-use crate::{token::Span, util::intern::Interned};
+use crate::{token::Span, types::builtins, util::intern::Interned};
 
-#[derive(Debug, PartialEq, Default)]
-pub struct Program {
-    pub classes: Vec<Class>,
+#[derive(Debug, Default)]
+pub struct Program<T = TypeName> {
+    pub classes: Vec<Class<T>>,
 }
 
-impl Program {
-    pub fn dummy() -> Program {
-        Program {
-            classes: Vec::new(),
+#[derive(Debug, Clone)]
+pub struct Class<T = TypeName> {
+    pub name: T,
+    /// Actual inheritance can be accessed through [`TypedClass::name`]'s
+    /// [`Type::parent`], if typed.
+    ///
+    /// This field always preserves the original source declaration.
+    pub inherits: Option<TypeName>,
+    pub features: Vec<Feature<T>>,
+}
+
+impl<T> Class<T> {
+    pub fn new_empty_with_name(name: T) -> Self {
+        Class {
+            name,
+            inherits: None,
+            features: Vec::with_capacity(0),
         }
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct Class {
-    pub name: TypeName,
-    pub inherits: Option<TypeName>,
-    pub features: Vec<Feature>,
+#[derive(Debug, Clone)]
+pub enum Feature<T = TypeName> {
+    Attribute(Binding<T>),
+    Method(Method<T>),
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Feature {
-    Attribute(Binding),
-    Method {
-        name: Ident,
-        /// List of parameters ("formal parameters").
-        formals: Vec<Formal>,
-        return_ty: TypeName,
-        body: Expr,
-    },
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Binding {
+#[derive(Debug, Clone)]
+pub struct Binding<T = TypeName> {
     pub name: Ident,
-    pub ty: TypeName,
-    pub initializer: Option<Expr>,
+    pub ty: T,
+    pub initializer: Option<Expr<T>>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct Formal {
+#[derive(Debug, Clone)]
+pub struct Method<T = TypeName> {
     pub name: Ident,
-    pub ty: TypeName,
+    /// List of parameters ("formal parameters").
+    pub formals: Vec<Formal<T>>,
+    pub return_ty: T,
+    pub body: Expr<T>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct Expr {
-    pub kind: ExprKind,
+#[derive(Debug, Clone)]
+pub struct Formal<T = TypeName> {
+    pub name: Ident,
+    pub ty: T,
+}
+
+#[derive(Debug, Clone)]
+pub struct Expr<T = TypeName> {
+    pub kind: ExprKind<T>,
     pub span: Span,
+    pub ty: T,
 }
 
-impl Expr {
-    pub fn dummy(span: Span) -> Expr {
+impl<T> Expr<T> {
+    pub fn dummy(span: Span) -> Expr<T>
+    where
+        T: Default,
+    {
         Expr {
             kind: ExprKind::Dummy,
             span,
+            ty: T::default(),
         }
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ExprKind {
+#[derive(Debug, Clone)]
+pub enum ExprKind<T = TypeName> {
     Assignment {
         target: Ident,
-        value: Box<Expr>,
+        value: Box<Expr<T>>,
     },
     Dispatch {
-        qualifier: Option<DispatchQualifier>,
+        qualifier: Option<DispatchQualifier<T>>,
         method: Ident,
-        args: Vec<Expr>,
+        args: Vec<Expr<T>>,
     },
     Conditional {
-        predicate: Box<Expr>,
-        then_arm: Box<Expr>,
-        else_arm: Box<Expr>,
+        predicate: Box<Expr<T>>,
+        then_arm: Box<Expr<T>>,
+        else_arm: Box<Expr<T>>,
     },
     While {
-        predicate: Box<Expr>,
-        body: Box<Expr>,
+        predicate: Box<Expr<T>>,
+        body: Box<Expr<T>>,
     },
+    /// AKA: Sequence
     Block {
         /// Non empty list of expressions.
-        body: Vec<Expr>,
+        body: Vec<Expr<T>>,
     },
     Let {
         /// Non empty list of bindings.
-        bindings: Vec<Binding>,
-        body: Box<Expr>,
+        bindings: Vec<Binding<T>>,
+        body: Box<Expr<T>>,
     },
     Case {
-        predicate: Box<Expr>,
+        predicate: Box<Expr<T>>,
         /// Non empty list of arms.
-        arms: Vec<CaseArm>,
+        arms: Vec<CaseArm<T>>,
+    },
+    New {
+        ty: T,
     },
     Unary {
         op: UnaryOperator,
-        expr: Box<Expr>,
+        expr: Box<Expr<T>>,
     },
     Binary {
         op: BinaryOperator,
-        lhs: Box<Expr>,
-        rhs: Box<Expr>,
+        lhs: Box<Expr<T>>,
+        rhs: Box<Expr<T>>,
     },
-    Paren(Box<Expr>),
+    Paren(Box<Expr<T>>),
     Id(Ident),
     Int(i64),
     String(Box<str>),
@@ -154,28 +172,28 @@ pub enum ExprKind {
     Dummy,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct DispatchQualifier {
-    pub expr: Box<Expr>,
-    pub ty: TypeName,
+#[derive(Debug, Clone)]
+pub struct DispatchQualifier<T = TypeName> {
+    pub expr: Box<Expr<T>>,
+    pub ty: T,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct CaseArm {
+#[derive(Debug, Clone)]
+pub struct CaseArm<T = TypeName> {
     pub name: Ident,
-    pub ty: TypeName,
-    pub body: Box<Expr>,
+    pub ty: T,
+    pub body: Box<Expr<T>>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 pub enum UnaryOperator {
-    New,
     IsVoid,
+    /// AKA Negation (of integers)
     Inverse,
     Not,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 pub enum BinaryOperator {
     Add,
     Sub,
@@ -186,8 +204,28 @@ pub enum BinaryOperator {
     Leq,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 pub struct TypeName(pub Ident);
+
+impl Default for TypeName {
+    fn default() -> Self {
+        TypeName::new(builtins::NO_TYPE, builtins::SPAN)
+    }
+}
+
+impl TypeName {
+    pub const fn new(name: Interned<str>, span: Span) -> TypeName {
+        TypeName(Ident { name, span })
+    }
+
+    pub fn name(&self) -> Interned<str> {
+        self.0.name
+    }
+
+    pub fn span(&self) -> Span {
+        self.0.span
+    }
+}
 
 impl From<TypeName> for Interned<str> {
     fn from(value: TypeName) -> Self {
@@ -201,7 +239,7 @@ impl From<&TypeName> for Interned<str> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 pub struct Ident {
     pub name: Interned<str>,
     pub span: Span,
@@ -216,5 +254,46 @@ impl From<Ident> for Interned<str> {
 impl From<&Ident> for Interned<str> {
     fn from(value: &Ident) -> Self {
         value.name
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_utils {
+    use crate::types::well_known;
+
+    use super::*;
+
+    pub fn from_expr_to_main_program(expr: Expr<TypeName>) -> Program<TypeName> {
+        Program {
+            classes: vec![Class {
+                name: TypeName::new(well_known::MAIN, builtins::SPAN),
+                inherits: None,
+                features: vec![Feature::Method(Method {
+                    name: Ident {
+                        name: well_known::MAIN_METHOD,
+                        span: builtins::SPAN,
+                    },
+                    formals: vec![],
+                    return_ty: TypeName::new(builtins::OBJECT, builtins::SPAN),
+                    body: expr,
+                })],
+            }],
+        }
+    }
+
+    pub fn from_main_program_to_expr<T>(mut prog: Program<T>) -> Expr<T>
+    where
+        T: Into<Interned<str>>,
+    {
+        assert_eq!(prog.classes.len(), 1);
+        let mut class = prog.classes.remove(0);
+        let name: Interned<str> = class.name.into();
+        assert_eq!(name, well_known::MAIN);
+        assert_eq!(class.features.len(), 1);
+        let Feature::Method(method) = class.features.remove(0) else {
+            panic!()
+        };
+        assert_eq!(method.name.name, well_known::MAIN_METHOD);
+        method.body
     }
 }
