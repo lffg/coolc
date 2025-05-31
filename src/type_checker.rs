@@ -139,7 +139,6 @@ impl Checker {
         }
     }
 
-    #[expect(unused_variables)]
     fn check_expr(&mut self, expr: Expr) -> Expr<Type> {
         let (kind, ty) = match expr.kind {
             ExprKind::Assignment { target, value } => {
@@ -153,7 +152,105 @@ impl Checker {
                 qualifier,
                 method,
                 args,
-            } => todo!(),
+            } => 'block: {
+                let curr_class = self.get_current_class();
+
+                // Fetch and check qualifier types
+                let (receiver_ty, qualifier_ty, qualifier) = match qualifier {
+                    Some(ast::DispatchQualifier {
+                        expr,
+                        static_qualifier: Some(static_qualifier),
+                    }) => {
+                        let expr = Box::new(self.check_expr(*expr));
+                        let receiver_ty = expr.ty.clone();
+                        let static_qualifier_ty = self.get_type(static_qualifier);
+                        // In the case of a statically qualified call, we must
+                        // also make sure that the receiver type is a subtype of
+                        // the static qualifier type.
+                        self.assert_is_subtype(&receiver_ty, &static_qualifier_ty, expr.span);
+                        (
+                            receiver_ty,
+                            static_qualifier_ty.clone(),
+                            Some(ast::DispatchQualifier {
+                                expr,
+                                static_qualifier: Some(static_qualifier_ty),
+                            }),
+                        )
+                    }
+                    Some(ast::DispatchQualifier {
+                        expr,
+                        static_qualifier: None,
+                    }) => {
+                        let expr = Box::new(self.check_expr(*expr));
+                        (
+                            expr.ty.clone(),
+                            expr.ty.clone(),
+                            Some(ast::DispatchQualifier {
+                                expr,
+                                static_qualifier: None,
+                            }),
+                        )
+                    }
+                    None => (curr_class.clone(), curr_class.clone(), None),
+                };
+
+                let maybe_sig = self
+                    .class_methods
+                    .get(&qualifier_ty.name())
+                    .and_then(|class_methods| class_methods.get(&method.name))
+                    .map(Rc::clone);
+
+                // If the signature is not defined, register an error.
+                // But we also want to check the arguments for completeness.
+                let Some(sig) = maybe_sig else {
+                    let error = Error::UndefinedMethod {
+                        class: qualifier_ty.name(),
+                        method: method.name,
+                    };
+                    self.errors.push(method.span.wrap(error));
+
+                    let dispatch = ExprKind::Dispatch {
+                        qualifier,
+                        method,
+                        args: args.into_iter().map(|arg| self.check_expr(arg)).collect(),
+                    };
+                    break 'block (dispatch, self.must_get_type(builtins::NO_TYPE));
+                };
+
+                // Check arguments
+                if sig.formals.len() != args.len() {
+                    let error = Error::IncorrectNumberOfArguments {
+                        actual: args.len(),
+                        expected: sig.formals.len(),
+                    };
+                    self.errors.push(method.span.wrap(error));
+                }
+                let args = sig
+                    .formals
+                    .iter()
+                    .zip(args)
+                    .map(|(formal_param, arg)| {
+                        let arg = self.check_expr(arg);
+                        let formal_ty = self.get_type(formal_param.ty);
+                        self.assert_is_subtype(&arg.ty, &formal_ty, arg.span);
+                        arg
+                    })
+                    .collect();
+
+                // Check return type
+                let return_ty = if sig.return_ty.name() == well_known::SELF_TYPE {
+                    receiver_ty
+                } else {
+                    self.get_type(sig.return_ty)
+                };
+
+                let dispatch = ExprKind::Dispatch {
+                    qualifier,
+                    method,
+                    args,
+                };
+                (dispatch, return_ty)
+            }
             ExprKind::Conditional {
                 predicate,
                 then_arm,
@@ -363,7 +460,7 @@ impl Checker {
                 if let Some(parent_sig) = inherited_methods.get(&method.name.name) {
                     self.assert_is_signature_match(&sig, parent_sig, method.name.span);
                 }
-                (method.name.name, sig)
+                (method.name.name, Rc::new(sig))
             });
             let mut cloned_methods = HashMap::clone(&inherited_methods);
             cloned_methods.extend(new_methods);
@@ -569,8 +666,8 @@ impl Checker {
         let expected = parent_sig;
 
         if actual.formals.len() != expected.formals.len() {
-            let actual = u16::try_from(actual.formals.len()).unwrap();
-            let expected = u16::try_from(expected.formals.len()).unwrap();
+            let actual = actual.formals.len();
+            let expected = expected.formals.len();
             let error = Error::OverriddenWithIncorrectNumberOfParameters { actual, expected };
             self.errors.push(current_method_name_span.wrap(error));
         }
@@ -724,8 +821,8 @@ pub enum Error {
         current: usize,
     },
     OverriddenWithIncorrectNumberOfParameters {
-        actual: u16,
-        expected: u16,
+        actual: usize,
+        expected: usize,
     },
     OverriddenWithIncorrectParameterTypes {
         actual: Interned<str>,
@@ -735,6 +832,14 @@ pub enum Error {
         actual: Interned<str>,
         expected: Interned<str>,
     },
+    UndefinedMethod {
+        class: Interned<str>,
+        method: Interned<str>,
+    },
+    IncorrectNumberOfArguments {
+        actual: usize,
+        expected: usize,
+    },
 }
 
 type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
@@ -743,7 +848,7 @@ type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
 /// corresponding signature. We use a [`Rc`] to have COW semantics, such that a
 /// child class has the same method map from its parent unless the former
 /// defines a new method (which may even override some of the parent's methods).
-type MethodsEnv = HashMap<Interned<str>, Rc<HashMap<Interned<str>, MethodSignature>>>;
+type MethodsEnv = HashMap<Interned<str>, Rc<HashMap<Interned<str>, Rc<MethodSignature>>>>;
 
 type Scope = HashMap<Interned<str>, Type>;
 
@@ -1322,6 +1427,134 @@ mod tests {
                     ident self (174..178 %: A)
             ";
         }
+
+        fn test_dispatch_ok() {
+            let program = "
+                class A {
+                    a() : Int { 0 };
+                };
+                class B inherits A {};
+                class C inherits A {
+                    a() : Int { 1 };
+                };
+
+                class Main {
+                    do(a: A) : A { a };
+                    main() : Int {{
+                        do(new B);
+                        self.do(new A);
+                        self@Main.do(do(new B));
+                        (new A).a();
+                        (new C)@A.a();
+                    }};
+                };
+            ";
+            let tree_ok = "
+                class A
+                  method a() : Int
+                    int 0 (59..60 %: Int)
+                class B inherits A
+                class C inherits A
+                  method a() : Int
+                    int 1 (191..192 %: Int)
+                class Main
+                  method do(a: A) : A
+                    ident a (280..281 %: A)
+                  method main() : Int
+                    block (319..542 %: Int)
+                      dispatch do (345..354 %: A)
+                        arguments
+                          new B (348..353 %: B)
+                      dispatch do (380..394 %: A)
+                        receiver
+                          ident self (380..384 %: Main)
+                        arguments
+                          new A (388..393 %: A)
+                      dispatch do (420..443 %: A)
+                        receiver @ Main
+                          ident self (420..424 %: Main)
+                        arguments
+                          dispatch do (433..442 %: A)
+                            arguments
+                              new B (436..441 %: B)
+                      dispatch a (469..480 %: Int)
+                        receiver
+                          paren (469..476 %: A)
+                            new A (470..475 %: A)
+                      dispatch a (506..519 %: Int)
+                        receiver @ A
+                          paren (506..513 %: C)
+                            new C (507..512 %: C)
+            ";
+        }
+
+        fn test_self_type_ret_ok() {
+            let program = "
+                class Builder {
+                    build() : SELF_TYPE { self };
+                };
+                class AbstractFactory inherits Builder {};
+                class Main {
+                    main() : AbstractFactory {
+                        (new AbstractFactory).build()
+                    };
+                };
+            ";
+            let tree_ok = "
+                class Builder
+                  method build() : Builder
+                    ident self (75..79 %: Builder)
+                class AbstractFactory inherits Builder
+                class Main
+                  method main() : AbstractFactory
+                    dispatch build (261..290 %: AbstractFactory)
+                      receiver
+                        paren (261..282 %: AbstractFactory)
+                          new AbstractFactory (262..281 %: AbstractFactory)
+            ";
+        }
+
+        fn test_dispatch_errors() {
+            let program = "
+                class A {
+                    common(): Int { 0 };
+                    a(): Int { 1 };
+                };
+                class B inherits A {
+                    common(): Int { 2 };
+                    b(): Int { 3 };
+                };
+                class Main {
+                    main(a: A, b: B): Int {{
+                        main(a, b, a); -- (1) more args
+                        main(a, a); -- (2) incorrect (A instead of B in 2nd)
+                        main(); -- (3) less args
+
+                        a@B.b(); -- (4) A is not subtype of B
+
+                        undefined1(); -- (5)
+                        a.undefined2(); -- (6)
+                        b@A.undefined3(); -- (7)
+
+                        0;
+                    }};
+                };
+            ";
+            let expected_errors = &[
+                // 1
+                "354..358: incorrect number of arguments. expected 2, but got 3",
+                // 2
+                "418..419: type A is not assignable to type B",
+                // 3
+                "487..491: incorrect number of arguments. expected 2, but got 0",
+                // 4
+                "537..538: type A is not assignable to type B",
+                // 5, 6, 7
+                "600..610: undefined method undefined1 on class Main",
+                "647..657: undefined method undefined2 on class A",
+                "696..706: undefined method undefined3 on class A",
+            ];
+        }
     );
 
     #[test]
@@ -1531,6 +1764,14 @@ mod tests {
                     "{span}: overriding method with incorrect return type: \
                     expected type {expected}, but got {actual}"
                 )
+            }
+            Error::IncorrectNumberOfArguments { actual, expected } => format!(
+                "{span}: incorrect number of arguments. expected {expected}, but got {actual}"
+            ),
+            Error::UndefinedMethod { class, method } => {
+                let method = i.get(method);
+                let class = i.get(class);
+                format!("{span}: undefined method {method} on class {class}")
             }
         }
     }

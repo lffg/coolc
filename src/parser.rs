@@ -441,7 +441,7 @@ impl Parser<'_, '_, '_> {
             //
             // Static Dispatch: expr @ TYPE . ID ( [expr [, expr]*] )
             TokenKind::At => {
-                let ty = self.parse_type()?;
+                let static_qualifier = self.parse_type()?;
                 self.consume(TokenKind::Dot)?;
                 let method = self.parse_ident()?;
 
@@ -455,7 +455,7 @@ impl Parser<'_, '_, '_> {
                 let dispatch = ExprKind::Dispatch {
                     qualifier: Some(DispatchQualifier {
                         expr: Box::new(lhs),
-                        ty,
+                        static_qualifier: Some(static_qualifier),
                     }),
                     method,
                     args,
@@ -473,13 +473,16 @@ impl Parser<'_, '_, '_> {
                 })?;
                 let end = self.consume(TokenKind::RParen)?;
 
-                // XX: Do we need try to parse the qualifier here?
+                let span = lhs.span.to(end.span());
                 let dispatch = ExprKind::Dispatch {
-                    qualifier: None,
+                    qualifier: Some(DispatchQualifier {
+                        expr: Box::new(lhs),
+                        static_qualifier: None,
+                    }),
                     method,
                     args,
                 };
-                (dispatch, lhs.span.to(end.span()))
+                (dispatch, span)
             }
 
             // Self Dispatch Call: ID ( [expr [, expr]*] ) (parsed as led for '(')

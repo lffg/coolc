@@ -173,12 +173,23 @@ where
             args,
         } => {
             writeln!(w, "dispatch {} ({span}{ty})", idents.get(method))?;
-            if let Some(ref qual) = qualifier {
-                print_dispatch_qualifier(w, idents, i + 1, qual)?;
+
+            if let Some(qualifier) = &qualifier {
+                sp(w, i + 1)?;
+                write!(w, "receiver")?;
+                if let Some(static_qualifier) = &qualifier.static_qualifier {
+                    write!(w, " @ {}", idents.get(static_qualifier))?;
+                }
+                writeln!(w)?;
+                print_expr(w, idents, i + 2, &qualifier.expr)?;
             }
-            // Just list arguments indented
-            for arg in args {
-                print_expr(w, idents, i + 1, arg)?;
+
+            if !args.is_empty() {
+                sp(w, i + 1)?;
+                writeln!(w, "arguments")?;
+                for arg in args {
+                    print_expr(w, idents, i + 2, arg)?;
+                }
             }
         }
         ExprKind::Conditional {
@@ -256,21 +267,6 @@ where
             writeln!(w, "dummy ({span}{ty})")?;
         }
     }
-    Ok(())
-}
-
-fn print_dispatch_qualifier<T: Typed>(
-    w: &mut impl Write,
-    idents: &Interner<str>,
-    i: usize,
-    qual: &DispatchQualifier<T>,
-) -> std::io::Result<()>
-where
-    for<'a> &'a T: Into<Interned<str>>,
-{
-    sp(w, i)?;
-    writeln!(w, "qualifier @ {}", idents.get(&qual.ty))?; // Indicate type association
-    print_expr(w, idents, i + 1, &qual.expr)?; // Print the actual expression indented
     Ok(())
 }
 

@@ -175,7 +175,7 @@ pub enum ExprKind<T = TypeName> {
 #[derive(Debug, Clone)]
 pub struct DispatchQualifier<T = TypeName> {
     pub expr: Box<Expr<T>>,
-    pub ty: T,
+    pub static_qualifier: Option<T>,
 }
 
 #[derive(Debug, Clone)]
