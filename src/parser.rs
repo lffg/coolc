@@ -668,18 +668,9 @@ impl Parser<'_, '_, '_> {
 
     /// Setups the parser, skipping any trivia if necessary.
     fn setup(&mut self) {
-        while Self::is_trivia(self.peek().kind) {
+        while self.peek().kind.is_trivia() {
             self.advance();
         }
-    }
-
-    /// Checks whether the token can be skipped for parsing purposes.
-    #[inline]
-    fn is_trivia(kind: TokenKind) -> bool {
-        matches!(
-            kind,
-            TokenKind::InlineComment | TokenKind::MultilineComment | TokenKind::Whitespace
-        )
     }
 
     /// Returns the current token.
@@ -698,7 +689,7 @@ impl Parser<'_, '_, '_> {
         let c = self.peek(); // Before any advancement
         while {
             self.cursor += 1;
-            Self::is_trivia(self.peek().kind)
+            self.peek().kind.is_trivia()
         } {}
         c
     }
@@ -843,6 +834,7 @@ pub(crate) mod test_utils {
         (i, prog)
     }
 
+    #[expect(dead_code)]
     pub fn parse_expr(src: &str) -> (Interner<str>, Expr) {
         let mut i = Interner::with_capacity(32);
         let prog =
@@ -853,30 +845,708 @@ pub(crate) mod test_utils {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::fmt::tree::print_expr_string;
+    use crate::util::test_utils::tree_tests;
 
-    use super::*;
+    tree_tests!(
+        use parser;
 
-    #[test]
-    fn test() {
-        let mut tokens = Vec::new();
-        let mut ident_interner = Interner::with_capacity(0);
-        let (ast, errors) = parse_expr(
-            "\
-{
-    {
-        1 + 2;
-        1 + + 2;
-    };
-    {
-        3 + 4;
-    };
-}",
-            &mut tokens,
-            &mut ident_interner,
-        )
-        .unwrap_err();
-        println!("{}", print_expr_string(&ident_interner, &ast));
-        println!("{errors:#?}");
-    }
+        fn test_simple_expression() {
+            let expr = "(1 * 2 + 3) - (1 + 2 * 3)";
+            let tree_ok = "
+                binary Sub (0..25)
+                  paren (0..11)
+                    binary Add (1..10)
+                      binary Mul (1..6)
+                        int 1 (1..2)
+                        int 2 (5..6)
+                      int 3 (9..10)
+                  paren (14..25)
+                    binary Add (15..24)
+                      int 1 (15..16)
+                      binary Mul (19..24)
+                        int 2 (19..20)
+                        int 3 (23..24)
+            ";
+        }
+
+        fn test_identifier_expr() {
+            let expr = "myVar";
+            let tree_ok = "ident myVar (0..5)";
+        }
+
+        fn test_integer_literal_expr() {
+            let expr = "12345";
+            let tree_ok = "int 12345 (0..5)";
+        }
+
+        fn test_string_literal_expr() {
+            let expr = r#""hello world""#;
+            let tree_ok = r#"string "hello world" (0..13)"#;
+        }
+
+        fn test_escaped_string_literal_expr() {
+            let expr = r#""hello\nworld""#;
+            let tree_ok = r#"string "hello\nworld" (0..14)"#;
+        }
+
+        fn test_boolean_true_expr() {
+            let expr = "true";
+            let tree_ok = "bool true (0..4)";
+        }
+
+        fn test_boolean_false_expr() {
+            let expr = "false";
+            let tree_ok = "bool false (0..5)";
+        }
+
+        fn test_parenthesized_expr() {
+            let expr = "(x)";
+            let tree_ok = "
+                paren (0..3)
+                  ident x (1..2)
+            ";
+        }
+
+        fn test_block_expr_simple() {
+            let expr = "{ x; }";
+            let tree_ok = "
+                block (0..6)
+                  ident x (2..3)
+            ";
+        }
+
+        fn test_block_expr_multiple_statements() {
+            let expr = "{ x; y; z; }";
+            let tree_ok = "
+                block (0..12)
+                  ident x (2..3)
+                  ident y (5..6)
+                  ident z (8..9)
+            ";
+        }
+
+        fn test_new_object_expr() {
+            let expr = "new MyType";
+            let tree_ok = "new MyType (0..10)";
+        }
+
+        fn test_unary_isvoid_expr() {
+            let expr = "isvoid x";
+            let tree_ok = "
+                unary IsVoid (0..8)
+                  ident x (7..8)
+            ";
+        }
+
+        fn test_unary_integer_negation_expr() {
+            let expr = "~x";
+            let tree_ok = "
+                unary Inverse (0..2)
+                  ident x (1..2)
+            ";
+        }
+
+        fn test_unary_boolean_negation_expr() {
+            let expr = "not x";
+            let tree_ok = "
+                unary Not (0..5)
+                  ident x (4..5)
+            ";
+        }
+
+        fn test_binary_addition_expr() {
+            let expr = "a + b";
+            let tree_ok = "
+                binary Add (0..5)
+                  ident a (0..1)
+                  ident b (4..5)
+            ";
+        }
+
+        fn test_binary_subtraction_expr() {
+            let expr = "a - b";
+            let tree_ok = "
+                binary Sub (0..5)
+                  ident a (0..1)
+                  ident b (4..5)
+            ";
+        }
+
+        fn test_binary_multiplication_expr() {
+            let expr = "a * b";
+            let tree_ok = "
+                binary Mul (0..5)
+                  ident a (0..1)
+                  ident b (4..5)
+            ";
+        }
+
+        fn test_binary_division_expr() {
+            let expr = "a / b";
+            let tree_ok = "
+                binary Div (0..5)
+                  ident a (0..1)
+                  ident b (4..5)
+            ";
+        }
+
+        fn test_binary_less_than_expr() {
+            let expr = "a < b";
+            let tree_ok = "
+                binary Le (0..5)
+                  ident a (0..1)
+                  ident b (4..5)
+            ";
+        }
+
+        fn test_binary_less_than_or_equal_expr() {
+            let expr = "a <= b";
+            let tree_ok = "
+                binary Leq (0..6)
+                  ident a (0..1)
+                  ident b (5..6)
+            ";
+        }
+
+        fn test_binary_equals_expr() {
+            let expr = "a = b";
+            let tree_ok = "
+                binary Eq (0..5)
+                  ident a (0..1)
+                  ident b (4..5)
+            ";
+        }
+
+        fn test_assignment_expr() {
+            let expr = "a <- b";
+            let tree_ok = "
+                assignment a (0..6)
+                  ident b (5..6)
+            ";
+        }
+
+        fn test_assignment_expr_complex_rhs() {
+            let expr = "a <- b + c";
+            let tree_ok = "
+                assignment a (0..10)
+                  binary Add (5..10)
+                    ident b (5..6)
+                    ident c (9..10)
+            ";
+        }
+
+        fn test_conditional_expr() {
+            let expr = "if p then x else y fi";
+            let tree_ok = "
+                conditional (0..21)
+                  ident p (3..4)
+                  ident x (10..11)
+                  ident y (17..18)
+            ";
+        }
+
+        fn test_while_loop_expr() {
+            let expr = "while cond loop body pool";
+            let tree_ok = "
+                while (0..25)
+                  ident cond (6..10)
+                  ident body (16..20)
+            ";
+        }
+
+        fn test_let_expr_single_binding_no_init() {
+            let expr = "let x : Int in x";
+            let tree_ok = "
+                let (0..16)
+                  binding x: Int
+                  in
+                    ident x (15..16)
+            ";
+        }
+
+        fn test_let_expr_single_binding_with_init() {
+            let expr = "let x : Int <- 1 in x";
+            let tree_ok = "
+                let (0..21)
+                  binding x: Int (initialized)
+                    int 1 (15..16)
+                  in
+                    ident x (20..21)
+            ";
+        }
+
+        fn test_let_expr_multiple_bindings() {
+            let expr = r#"let x : Int <- 1, y : String <- "s" in x"#;
+            let tree_ok = r#"
+                let (0..40)
+                  binding x: Int (initialized)
+                    int 1 (15..16)
+                  binding y: String (initialized)
+                    string "s" (32..35)
+                  in
+                    ident x (39..40)
+            "#;
+        }
+
+        fn test_case_expr_single_branch() {
+            let expr = "
+                case e of
+                    id1 : Type1 => expr1;
+                esac
+            ";
+            let tree_ok = "
+                case (17..89)
+                  ident e (22..23)
+                  arm id1: Type1 =>
+                    ident expr1 (62..67)
+            ";
+        }
+
+        fn test_case_expr_multiple_branches() {
+            let expr = "
+                case e of
+                    id1 : T1 => e1;
+                    id2 : T2 => e2;
+                esac
+            ";
+            let tree_ok = "
+                case (17..119)
+                  ident e (22..23)
+                  arm id1: T1 =>
+                    ident e1 (59..61)
+                  arm id2: T2 =>
+                    ident e2 (95..97)
+            ";
+        }
+
+        fn test_self_dispatch_expr_no_args() {
+            let expr = "method()";
+            let tree_ok = "
+                dispatch method (0..8)
+            ";
+        }
+
+        fn test_self_dispatch_expr_one_arg() {
+            let expr = "method(arg1)";
+            let tree_ok = "
+                dispatch method (0..12)
+                  arguments
+                    ident arg1 (7..11)
+            ";
+        }
+
+        fn test_self_dispatch_expr_multiple_args() {
+            let expr = "method(arg1, arg2)";
+            let tree_ok = "
+                dispatch method (0..18)
+                  arguments
+                    ident arg1 (7..11)
+                    ident arg2 (13..17)
+            ";
+        }
+
+        fn test_dynamic_dispatch_expr_no_args() {
+            let expr = "obj.method()";
+            let tree_ok = "
+                dispatch method (0..12)
+                  receiver
+                    ident obj (0..3)
+            ";
+        }
+
+        fn test_dynamic_dispatch_expr_one_arg() {
+            let expr = "obj.method(arg1)";
+            let tree_ok = "
+                dispatch method (0..16)
+                  receiver
+                    ident obj (0..3)
+                  arguments
+                    ident arg1 (11..15)
+            ";
+        }
+
+        fn test_static_dispatch_expr_no_args() {
+            let expr = "obj@Type.method()";
+            let tree_ok = "
+                dispatch method (0..17)
+                  receiver @ Type
+                    ident obj (0..3)
+            ";
+        }
+
+        fn test_static_dispatch_expr_one_arg() {
+            let expr = "obj@Type.method(arg1)";
+            let tree_ok = "
+                dispatch method (0..21)
+                  receiver @ Type
+                    ident obj (0..3)
+                  arguments
+                    ident arg1 (16..20)
+            ";
+        }
+
+        fn test_precedence_mul_plus() {
+            let expr = "1 + 2 * 3";
+            let tree_ok = "
+                binary Add (0..9)
+                  int 1 (0..1)
+                  binary Mul (4..9)
+                    int 2 (4..5)
+                    int 3 (8..9)
+            ";
+        }
+
+        fn test_precedence_plus_mul() {
+            let expr = "1 * 2 + 3";
+            let tree_ok = "
+                binary Add (0..9)
+                  binary Mul (0..5)
+                    int 1 (0..1)
+                    int 2 (4..5)
+                  int 3 (8..9)
+            ";
+        }
+
+        fn test_precedence_assign() {
+            let expr = "a <- b <- c + d"; // a <- (b <- (c + d))
+            let tree_ok = "
+                assignment a (0..15)
+                  assignment b (5..15)
+                    binary Add (10..15)
+                      ident c (10..11)
+                      ident d (14..15)
+            ";
+        }
+
+        fn test_precedence_dispatch_arith() {
+            let expr = "obj.meth(a + b)";
+            let tree_ok = "
+                dispatch meth (0..15)
+                  receiver
+                    ident obj (0..3)
+                  arguments
+                    binary Add (9..14)
+                      ident a (9..10)
+                      ident b (13..14)
+            ";
+        }
+
+        fn test_precedence_arith_compare() {
+            let expr = "a + b < c * d"; // (a + b) < (c * d)
+            let tree_ok = "
+                binary Le (0..13)
+                  binary Add (0..5)
+                    ident a (0..1)
+                    ident b (4..5)
+                  binary Mul (8..13)
+                    ident c (8..9)
+                    ident d (12..13)
+            ";
+        }
+
+        fn test_attribute_no_init() {
+            let program = "
+                class C {
+                    attr : Int;
+                };
+            ";
+            let tree_ok = "
+                class C
+                  attribute attr: Int
+            ";
+        }
+
+        fn test_attribute_with_init() {
+            let program = "
+                class C {
+                    attr : Int <- 1;
+                };
+            ";
+            let tree_ok = "
+                class C
+                  attribute attr: Int (initialized)
+                    int 1 (61..62)
+            ";
+        }
+
+        fn test_method_no_formals() {
+            let program = "
+                class C {
+                    meth() : Bool { true };
+                };
+            ";
+            let tree_ok = "
+                class C
+                  method meth() : Bool
+                    bool true (63..67)
+            ";
+        }
+
+        fn test_method_one_formal() {
+            let program = "
+                class C {
+                    meth(f1: Int) : Bool { true };
+                };
+            ";
+            let tree_ok = "
+                class C
+                  method meth(f1: Int) : Bool
+                    bool true (70..74)
+            ";
+        }
+
+        fn test_method_multiple_formals() {
+            let program = "
+                class C {
+                    meth(f1: Int, f2: String) : Bool { true };
+                };
+            ";
+            let tree_ok = "
+                class C
+                  method meth(f1: Int, f2: String) : Bool
+                    bool true (82..86)
+            ";
+        }
+
+        fn test_simple_class() {
+            let program = "
+                class Main {
+                    main(): Int { 1 };
+                };
+            ";
+            let tree_ok = "
+                class Main
+                  method main() : Int
+                    int 1 (64..65)
+            ";
+        }
+
+        fn test_class_with_inheritance() {
+            let program = "
+                class Sub inherits Super {};
+            ";
+            let tree_ok = "class Sub inherits Super";
+        }
+
+        fn test_class_with_multiple_features() {
+            let program = "
+                class Test {
+                    attr1 : String;
+                    meth1() : Int { 0 };
+                    attr2 : Bool <- false;
+                    meth2(p1: Type1, p2: Type2) : ReturnType { body_expr };
+                };
+            ";
+            let tree_ok = "
+                class Test
+                  attribute attr1: String
+                  method meth1() : Int
+                    int 0 (102..103)
+                  attribute attr2: Bool (initialized)
+                    bool false (143..148)
+                  method meth2(p1: Type1, p2: Type2) : ReturnType
+                    ident body_expr (213..222)
+            ";
+        }
+
+        fn test_program_single_class() {
+            let program = "
+                class OnlyClass {};
+            ";
+            let tree_ok = "
+                class OnlyClass
+            ";
+        }
+
+        fn test_program_multiple_classes() {
+            let program = "
+                class First {};
+                class Second {
+                    meth() : IO { self };
+                };
+            ";
+            let tree_ok = "
+                class First
+                class Second
+                  method meth() : IO
+                    ident self (98..102)
+            ";
+        }
+
+        fn test_error_empty_program() {
+            let program = "";
+            let expected_errors = &["0..0: empty program"];
+        }
+
+        fn test_error_program_only_whitespace() {
+            let program = "   \n\t   ";
+            let expected_errors = &["0..8: empty program"];
+        }
+
+        fn test_error_class_missing_semicolon() {
+            let program = "
+                class A { }
+                class B { }
+            ";
+            let expected_errors = &[
+                "45..50: expected token Semicolon, but got Class",
+                "69..69: expected token Semicolon, but got Eof",
+            ];
+        }
+
+        fn test_error_attribute_missing_type() {
+            let program = "
+                class A {
+                    attr : ;
+                };
+            ";
+            let expected_errors = &[
+                "54..55: expected token Identifier, but got Semicolon",
+                "72..73: expected token Identifier, but got RBrace",
+            ];
+        }
+
+        fn test_error_method_missing_return_type() {
+            let program = "
+                class A {
+                    meth() : { 1 };
+                };
+            ";
+            let expected_errors = &["56..57: expected token Identifier, but got LBrace"];
+        }
+
+        fn test_error_method_formal_malformed() {
+            let program = "
+                class A {
+                    meth(f1 Int) : Bool { true };
+                };
+            ";
+            let expected_errors = &["55..58: expected token Colon, but got Identifier"];
+        }
+
+        fn test_error_expr_unexpected_token_in_expr() {
+            let expr = "1 + ;";
+            let expected_errors = &["4..5: unexpected token in expression"];
+        }
+
+        fn test_error_expr_unmatched_paren_open() {
+            let expr = "(1 + 2";
+            let expected_errors = &["6..6: expected token RParen, but got Eof"];
+        }
+
+        fn test_error_expr_unmatched_paren_close() {
+            let expr = "1 + 2)";
+            let expected_errors = &[];
+        }
+
+        fn test_error_empty_block_body() {
+            let expr = "{}";
+            // wtf?
+            let expected_errors = &["1..2: empty block or sequence"];
+        }
+
+        fn test_error_empty_case_arms() {
+            let expr = "case x of esac";
+            let expected_errors = &["10..14: empty case"];
+        }
+
+        fn test_error_missing_let_binding() {
+            let expr = "let in x";
+            let expected_errors = &["4..6: let without binding"];
+        }
+
+        fn test_error_parse_int_too_large() {
+            let expr = "999999999999999999999999999999"; // Exceeds i64
+            let expected_errors = &["0..30: parse int error, out of bounds"];
+        }
+
+        fn test_error_invalid_assignment_target() {
+            let expr = "1 <- 2";
+            let expected_errors = &["0..1: invalid assignment target"];
+        }
+
+        fn test_error_invalid_dispatch_target_non_id() {
+            let expr = "(1+2)()"; // (1+2) is not an ID for self-dispatch
+            let expected_errors = &["0..5: invalid dispatch"];
+        }
+
+        fn test_error_lexer_unexpected_char() {
+            let expr = "$";
+            let expected_errors = &["0..1: unexpected token in expression"];
+        }
+
+        fn test_error_lexer_unclosed_comment() {
+            let program = "class A { (* unclosed comment };";
+            let expected_errors =
+                &["10..32: expected token Identifier, but got ErrorUnclosedComment"];
+        }
+
+        fn test_error_lexer_unclosed_string() {
+            let expr = "\"abc";
+            let expected_errors = &["0..4: unexpected token in expression"];
+        }
+
+        fn test_error_lexer_unescaped_line_break_in_string() {
+            let expr = "\"string\n\""; // \n is not escaped
+            let expected_errors = &["7..8: unexpected token in expression"];
+        }
+
+        fn test_recovery_in_feature() {
+            let program = "
+                class Main {
+                    feature1() : Int {
+                        1 +
+                    };
+
+                    feature2() : Int {
+                        1 + 2
+                    };
+                };
+            ";
+            let tree_error = "
+                class Main
+                  method feature2() : Int
+                    binary Add (184..189)
+                      int 1 (184..185)
+                      int 2 (188..189)
+            ";
+            let expected_errors = &["117..118: unexpected token in expression"];
+        }
+
+        fn test_recovery_in_let_multiple_bindings() {
+            let expr = "
+                let x : Int <- 1 + 2,
+                    y : Int <- (3+),
+                    z : Int <- 5 + 6 in
+                    x + y + z
+            ";
+            let tree_error = "
+                let (17..145)
+                  binding x: Int (initialized)
+                    binary Add (32..37)
+                      int 1 (32..33)
+                      int 2 (36..37)
+                  binding z: Int (initialized)
+                    binary Add (107..112)
+                      int 5 (107..108)
+                      int 6 (111..112)
+                  in
+                    binary Add (136..145)
+                      binary Add (136..141)
+                        ident x (136..137)
+                        ident y (140..141)
+                      ident z (144..145)
+            ";
+            let expected_errors = &["73..74: unexpected token in expression"];
+        }
+
+        fn test_recovery_block_expr_error_continue() {
+            let expr = "{ 1 + ; 2 * 3 ; }"; // Error in first, should parse second
+            let tree_error = "dummy (17..17)";
+            let expected_errors = &[
+                "6..7: unexpected token in expression",
+                "16..17: unexpected token in expression",
+            ];
+        }
+    );
 }

@@ -97,7 +97,7 @@ impl Span {
 
     #[track_caller]
     pub fn wrap<T>(self, inner: T) -> Spanned<T> {
-        println!("{}", std::panic::Location::caller());
+        // println!("{}", std::panic::Location::caller());
         Spanned { span: self, inner }
     }
 }
@@ -196,6 +196,13 @@ impl TokenKind {
                 | TokenKind::ErrorUnclosedComment
                 | TokenKind::ErrorUnclosedString
                 | TokenKind::ErrorUnescapedLineBreak
+        )
+    }
+
+    pub fn is_trivia(self) -> bool {
+        matches!(
+            self,
+            TokenKind::InlineComment | TokenKind::MultilineComment | TokenKind::Whitespace
         )
     }
 }

@@ -1,4 +1,8 @@
-use std::{borrow::Cow, collections::HashMap, rc::Rc};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap},
+    rc::Rc,
+};
 
 use crate::{
     ast::{self, BinaryOperator, Expr, ExprKind, Program, TypeName, UnaryOperator},
@@ -397,7 +401,7 @@ impl Checker<'_> {
     }
 
     fn build_methods_env(&mut self, program: &Program) {
-        let classes: HashMap<_, _> = {
+        let classes: BTreeMap<_, _> = {
             // We first create the environment with the builtins.
             // For now, they don't have any methods.
             let builtins = builtins::ALL.iter().map(|builtin| {
@@ -411,6 +415,8 @@ impl Checker<'_> {
             builtins.chain(user_defined).collect()
         };
 
+        // `classes` should be of type `BTreeMap` to guarantee a stable order
+        // in this loop.
         for class in classes.values() {
             let class_ty = self.get_type(class.name);
             self.define_class_methods(&classes, &class_ty);
@@ -423,7 +429,7 @@ impl Checker<'_> {
     /// checking whether overridden signatures are compatible.
     fn define_class_methods(
         &mut self,
-        classes: &HashMap<Interned<str>, Cow<'_, ast::Class>>,
+        classes: &BTreeMap<Interned<str>, Cow<'_, ast::Class>>,
         class_ty: &Type,
     ) {
         if self.class_methods.contains_key(&class_ty.name()) {
@@ -872,12 +878,16 @@ mod tests {
 
     use crate::{
         parser::test_utils::parse_program,
-        token::Spanned,
-        type_checker::{test_utils::typing_tests, Checker, Error, MethodsEnv},
-        util::intern::Interner,
+        type_checker::{Checker, MethodsEnv},
+        util::{
+            intern::Interner,
+            test_utils::{assert_errors, tree_tests},
+        },
     };
 
-    typing_tests!(
+    tree_tests!(
+        use checker;
+
         fn test_int() {
             let expr = "1";
             let tree_ok = "int 1 (0..1 %: Int)";
@@ -1653,12 +1663,31 @@ mod tests {
             BTreeMap::from([
                 (
                     ("A", "a1"),
-                    vec![("a1p1", "String"), ("a1p2", "String"), ("<ret>", "Int")],
+                    vec![("a1p1", "String"), ("a1p2", "String"), ("<ret>", "Int")]
                 ),
                 (("A", "a2"), vec![("a2p1", "String"), ("<ret>", "Int")]),
                 (("A", "a3"), vec![("<ret>", "Int")]),
                 (("A", "a4"), vec![("<ret>", "Int")]),
                 (("B", "b1"), vec![("<ret>", "Int")]),
+                (("IO", "in_int"), vec![("<ret>", "Int")]),
+                (("IO", "in_string"), vec![("<ret>", "String")]),
+                (
+                    ("IO", "out_int"),
+                    vec![("x", "Int"), ("<ret>", "SELF_TYPE")]
+                ),
+                (
+                    ("IO", "out_string"),
+                    vec![("x", "String"), ("<ret>", "SELF_TYPE")]
+                ),
+                (
+                    ("String", "concat"),
+                    vec![("s", "String"), ("<ret>", "String")]
+                ),
+                (("String", "length"), vec![("<ret>", "Int")]),
+                (
+                    ("String", "substr"),
+                    vec![("i", "Int"), ("l", "Int"), ("<ret>", "String")]
+                ),
             ])
         );
     }
@@ -1689,95 +1718,31 @@ mod tests {
             BTreeMap::from([
                 (("A", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
                 (("B", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
-                (("B", "b1"), vec![("<ret>", "Int"),]),
+                (("B", "b1"), vec![("<ret>", "Int")]),
                 (("C", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
                 (("D", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
                 (("D", "d1"), vec![("d", "Int"), ("<ret>", "Int")]),
+                (("IO", "in_int"), vec![("<ret>", "Int")]),
+                (("IO", "in_string"), vec![("<ret>", "String")]),
+                (
+                    ("IO", "out_int"),
+                    vec![("x", "Int"), ("<ret>", "SELF_TYPE")]
+                ),
+                (
+                    ("IO", "out_string"),
+                    vec![("x", "String"), ("<ret>", "SELF_TYPE")]
+                ),
+                (
+                    ("String", "concat"),
+                    vec![("s", "String"), ("<ret>", "String")]
+                ),
+                (("String", "length"), vec![("<ret>", "Int")]),
+                (
+                    ("String", "substr"),
+                    vec![("i", "Int"), ("l", "Int"), ("<ret>", "String")]
+                ),
             ])
         );
-    }
-
-    #[track_caller]
-    fn assert_errors(i: &Interner<str>, actual: &[Spanned<Error>], expected: &[&str]) {
-        let errors: Vec<_> = actual.iter().map(|e| fmt_error(i, e)).collect();
-        assert_eq!(errors, expected);
-    }
-
-    fn fmt_error(i: &Interner<str>, error: &Spanned<Error>) -> String {
-        let span = error.span;
-        match error.inner {
-            Error::DuplicateTypeDefinition {
-                name,
-                other_definition_span,
-            } => {
-                let name = i.get(name);
-                format!("{span}: class {name} already defined at {other_definition_span}")
-            }
-            Error::DuplicateMethodInClass {
-                other_definition_span,
-            } => {
-                format!("{span}: method with same name already defined at {other_definition_span}")
-            }
-            Error::DuplicateAttributeInClass {
-                other_definition_span,
-            } => {
-                format!(
-                    "{span}: attribute with same name already defined at {other_definition_span}"
-                )
-            }
-            Error::UndefinedType(name) => {
-                let name = i.get(name);
-                format!("{span}: class {name} is not defined")
-            }
-            Error::UndefinedName(name) => {
-                let name = i.get(name);
-                format!("{span}: {name} is not defined")
-            }
-            Error::Unassignable { dst, src } => {
-                let dst = i.get(dst);
-                let src = i.get(src);
-                format!("{span}: type {src} is not assignable to type {dst}")
-            }
-            Error::Mismatch { actual, expected } => {
-                let actual = i.get(actual);
-                let expected = i.get(expected);
-                format!("{span}: expected type {expected}, but got {actual}")
-            }
-            Error::IllegalSelfType => format!("{span}: illegal use of SELF_TYPE"),
-            Error::MaximumNumberOfParametersExceeded { current } => {
-                format!("{span}: maximum number of parameters exceeded (current is {current})")
-            }
-            Error::OverriddenWithIncorrectNumberOfParameters { actual, expected } => {
-                format!(
-                    "{span}: overriding method of originally {expected} parameters, \
-                    but new definition has {actual}"
-                )
-            }
-            Error::OverriddenWithIncorrectParameterTypes { actual, expected } => {
-                let actual = i.get(actual);
-                let expected = i.get(expected);
-                format!(
-                    "{span}: overriding method with incorrect parameter type: \
-                    expected type {expected}, but got {actual}"
-                )
-            }
-            Error::OverriddenWithIncorrectReturnType { actual, expected } => {
-                let actual = i.get(actual);
-                let expected = i.get(expected);
-                format!(
-                    "{span}: overriding method with incorrect return type: \
-                    expected type {expected}, but got {actual}"
-                )
-            }
-            Error::IncorrectNumberOfArguments { actual, expected } => format!(
-                "{span}: incorrect number of arguments. expected {expected}, but got {actual}"
-            ),
-            Error::UndefinedMethod { class, method } => {
-                let method = i.get(method);
-                let class = i.get(class);
-                format!("{span}: undefined method {method} on class {class}")
-            }
-        }
     }
 
     fn fmt_methods<'i>(
@@ -1804,129 +1769,4 @@ mod tests {
             })
             .collect()
     }
-}
-
-#[cfg(test)]
-pub mod test_utils {
-    macro_rules! typing_tests {
-        (
-            $(
-                fn $test_name:ident() {
-                    let $kind:ident = $source:expr;
-                    $($assertions_tt:tt)*
-                }
-            )*
-        ) => {
-            $(
-                #[test]
-                fn $test_name() {
-                    let (mut interner, untyped_ast) = typing_tests!(@@get_ast($kind), $source);
-                    let checker = crate::type_checker::Checker::with_capacity(&mut interner, 32);
-                    let check_result = typing_tests!(@@check($kind), checker, untyped_ast);
-                    let (typed_ast, _registry, errors) = match check_result {
-                        Ok((typed_ast, registry)) => (typed_ast, registry, vec![]),
-                        Err((typed_ast, registry, errors)) => (typed_ast, registry, errors),
-                    };
-
-                    let typed_ast = typing_tests!(@@cast_ast($kind), typed_ast);
-                    let ctx = &(interner, typed_ast, errors);
-                    typing_tests!(
-                        @@expand_assertions($kind),
-                        ctx,
-                        [$($assertions_tt)*]
-                    );
-                }
-            )*
-        };
-
-        (@@expand_assertions($kind:ident), $ctx:expr, []) => {};
-        (
-            @@expand_assertions($kind:ident), $ctx:expr,
-            [
-                let $assertion:ident = $assertion_expected:expr;
-                $($rest_assertions_tt:tt)*
-            ]
-        ) => {
-            {
-                typing_tests!(
-                    @@assertion($kind, $assertion),
-                    $ctx,
-                    $assertion_expected
-                );
-            }
-            typing_tests!(
-                @@expand_assertions($kind),
-                $ctx,
-                [$($rest_assertions_tt)*]
-            );
-        };
-
-        (@@assertion($kind:ident, expected_errors), $ctx:expr, $expected:expr) => {
-            let expected: &[&str] = $expected;
-            let (i, _typed_ast, actual_errors) = $ctx;
-            let errors: Vec<_> = actual_errors.iter().map(|e| fmt_error(&i, e)).collect();
-            ::pretty_assertions::assert_eq!(errors, expected);
-        };
-        (@@assertion($kind:ident, tree_ok), $ctx:expr, $expected:expr) => {
-            let expected = ::indoc::indoc! { $expected }.trim();
-            let (i, typed_ast, actual_errors) = $ctx;
-            let tree_str = typing_tests!(@@print_ast($kind), i, typed_ast);
-            let expected_errors: &[&str] = &[];
-            let errors: Vec<_> = actual_errors.iter().map(|e| fmt_error(&i, e)).collect();
-            assert_eq!(errors, expected_errors);
-            ::pretty_assertions::assert_eq!(tree_str.trim(), expected);
-        };
-        (@@assertion($kind:ident, tree_with_error), $ctx:expr, $expected:expr) => {
-            let expected = ::indoc::indoc! { $expected }.trim();
-            let (i, typed_ast, _actual_errors) = $ctx;
-            let tree_str = typing_tests!(@@print_ast($kind), i, typed_ast);
-            ::pretty_assertions::assert_eq!(tree_str.trim(), expected);
-        };
-        (@@assertion($kind:ident, $assertion:ident), $ctx:expr, $expected:expr) => {
-            compile_error!(concat!(
-                "assertion '",
-                stringify!($assertion),
-                "' is not implemented for kind '",
-                stringify!($kind),
-                "'",
-            ));
-        };
-
-        (@@get_ast(expr), $source:expr) => {
-            crate::parser::test_utils::parse_expr($source)
-        };
-        (@@get_ast(program), $source:expr) => {
-            crate::parser::test_utils::parse_program($source)
-        };
-        (@@get_ast($kind:ident), $source:expr) => {
-            compile_error!(concat!(
-                "can only use mode 'expr' or 'program' as source input. got '",
-                stringify!($kind),
-                "' instead",
-            ));
-        };
-
-        (@@check(expr), $checker:expr, $ast:expr) => {{
-            let prog = crate::ast::test_utils::from_expr_to_main_program($ast);
-            $checker.check(prog)
-        }};
-        (@@check(program), $checker:expr, $ast:expr) => {
-            $checker.check($ast)
-        };
-
-        (@@cast_ast(expr), $ast:expr) => {
-            crate::ast::test_utils::from_main_program_to_expr($ast)
-        };
-        (@@cast_ast(program), $ast:expr) => {
-            $ast
-        };
-
-        (@@print_ast(expr), $interner:expr, $ast:expr) => {
-            crate::util::fmt::tree::print_expr_string($interner, $ast)
-        };
-        (@@print_ast(program), $interner:expr, $ast:expr) => {
-            crate::util::fmt::tree::print_program_string($interner, $ast)
-        };
-    }
-    pub(crate) use typing_tests;
 }

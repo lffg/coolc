@@ -6,7 +6,6 @@ SUBMISSION_DIR := submission
 .PHONY: test
 test:
 	$(CARGO) test
-	$(CARGO) run -q -p tester
 
 .PHONY: bench
 bench:

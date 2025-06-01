@@ -116,8 +116,8 @@ impl Show for Spanned<parser::Error> {
         match error {
             InvalidAssignmentTarget => write!(f, "invalid assignment target"),
             InvalidDispatch => write!(f, "invalid dispatch"),
-            UnexpectedTokenInExpr { token } => {
-                write!(f, "unexpected token {token:?} in expression")
+            UnexpectedTokenInExpr { token: _ } => {
+                write!(f, "unexpected token in expression")
             }
             Unexpected { actual, expected } => {
                 write!(f, "expected token {expected:?}, but got {actual:?}")

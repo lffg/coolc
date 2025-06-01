@@ -8,4 +8,6 @@ pub mod types;
 pub mod util {
     pub mod fmt;
     pub mod intern;
+    #[cfg(test)]
+    pub(crate) mod test_utils;
 }
