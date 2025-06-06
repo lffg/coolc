@@ -272,6 +272,11 @@ impl Checker<'_> {
                 (ExprKind::Block { body }, last_ty)
             }
             ExprKind::Let { bindings, body } => {
+                if 1 < bindings.len() {
+                    return self.check_expr(ast::desugar::multi_binding_let(
+                        bindings, body, expr.span, &expr.ty,
+                    ));
+                }
                 let (bindings, scope) = self.get_typed_bindings_and_scope(bindings);
                 let body = self.scoped(scope, |this| this.check_expr(*body));
                 let ty = body.ty.clone();
@@ -1082,8 +1087,6 @@ mod tests {
             let expected_errors = &["0..1: a is not defined"];
         }
 
-        // This is currently an error, but it should be a valid program!
-        // I am lazy.
         fn test_multi_binding_let_ok() {
             let expr = "
               let a : Int <- 1,
@@ -1091,7 +1094,21 @@ mod tests {
               in
                 a + b
             ";
-            let expected_errors = &["62..63: a is not defined"];
+            let tree_ok = "
+                let (15..106 %: Int)
+                  binding a: Int (initialized)
+                    int 1 (30..31 %: Int)
+                  in
+                    let (15..106 %: Int)
+                      binding b: Int (initialized)
+                        binary Add (62..67 %: Int)
+                          ident a (62..63 %: Int)
+                          int 1 (66..67 %: Int)
+                      in
+                        binary Add (101..106 %: Int)
+                          ident a (101..102 %: Int)
+                          ident b (105..106 %: Int)
+            ";
         }
 
         fn test_let_ok_self_type() {

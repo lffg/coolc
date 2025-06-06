@@ -247,6 +247,32 @@ impl From<&Ident> for Interned<str> {
     }
 }
 
+pub mod desugar {
+    use super::*;
+
+    pub fn multi_binding_let<T>(
+        bindings: Vec<Binding<T>>,
+        mut body: Box<Expr<T>>,
+        span: Span,
+        ty: &T,
+    ) -> Expr<T>
+    where
+        T: Clone,
+    {
+        for binding in bindings.into_iter().rev() {
+            body = Box::new(Expr {
+                kind: ExprKind::Let {
+                    bindings: vec![binding],
+                    body,
+                },
+                span,
+                ty: ty.clone(),
+            });
+        }
+        *body
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_utils {
     use crate::types::well_known;
