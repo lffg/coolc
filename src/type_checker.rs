@@ -148,6 +148,10 @@ impl Checker<'_> {
     fn check_expr(&mut self, expr: Expr) -> Expr<Type> {
         let (kind, ty) = match expr.kind {
             ExprKind::Assignment { target, value } => {
+                if target.name == well_known::SELF {
+                    let error = Error::IllegalAssignmentToSelf;
+                    self.errors.push(target.span.wrap(error));
+                }
                 let target_ty = self.lookup_scope(&target);
                 let value = Box::new(self.check_expr(*value));
                 let value_ty = value.ty.clone();
@@ -834,6 +838,7 @@ pub enum Error {
         expected: Interned<str>,
     },
     IllegalSelfType,
+    IllegalAssignmentToSelf,
     MaximumNumberOfParametersExceeded {
         current: usize,
     },
@@ -1061,6 +1066,15 @@ mod tests {
                     assignment a (18..24 %: Int)
                       int 1 (23..24 %: Int)
             ";
+        }
+
+        fn test_assign_to_self_fails() {
+            let program = "
+                class Foo {
+                    foo() : Foo { self <- new Foo };
+                };
+            ";
+            let expected_errors = &["63..67: illegal self assignment"];
         }
 
         fn test_assign_fails_with_undefined_name() {

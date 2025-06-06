@@ -60,6 +60,7 @@ impl Show for Spanned<type_checker::Error> {
                 write!(f, "expected type {expected}, but got {actual}")
             }
             IllegalSelfType => write!(f, "illegal use of SELF_TYPE"),
+            IllegalAssignmentToSelf => write!(f, "illegal self assignment"),
             MaximumNumberOfParametersExceeded { current } => {
                 write!(
                     f,
