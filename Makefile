@@ -9,7 +9,7 @@ test:
 
 .PHONY: bench
 bench:
-	$(CARGO) bench -p cool-bench
+	$(CARGO) bench -p bench
 
 .PHONY: clean
 clean:

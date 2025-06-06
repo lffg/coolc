@@ -30,6 +30,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
+name = "bench"
+version = "0.0.1"
+dependencies = [
+ "cool",
+ "criterion",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -106,14 +114,6 @@ dependencies = [
  "indoc",
  "phf",
  "pretty_assertions",
-]
-
-[[package]]
-name = "cool-bench"
-version = "0.0.1"
-dependencies = [
- "cool",
- "criterion",
 ]
 
 [[package]]
