@@ -16,9 +16,11 @@ pub type ParseResult<T> = Result<T, (T, Vec<Spanned<Error>>)>;
 pub struct Checker<'ident> {
     registry: TypeRegistry,
     /// O environment.
-    scopes: Vec<HashMap<Interned<str>, Type>>,
-    /// M environment.
-    class_methods: MethodsEnv,
+    scopes: Vec<Scope>,
+    /// M environment is contained here.
+    ///
+    /// Here we keep a record of every method and attribute of each class.
+    classes: ClassesEnv,
     /// C environment.
     current_class: Interned<str>,
     errors: Vec<Spanned<Error>>,
@@ -29,7 +31,7 @@ impl Checker<'_> {
     pub fn with_capacity(ident_interner: &mut Interner<str>, capacity: usize) -> Checker<'_> {
         Checker {
             registry: TypeRegistry::with_capacity(capacity),
-            class_methods: HashMap::with_capacity(0),
+            classes: HashMap::with_capacity(0),
             scopes: Vec::with_capacity(24),
             current_class: builtins::NO_TYPE,
             errors: Vec::with_capacity(8),
@@ -44,15 +46,12 @@ impl Checker<'_> {
     ) -> Result<(Program<Type>, TypeRegistry), (Program<Type>, TypeRegistry, Vec<Spanned<Error>>)>
     {
         self.build_type_registry(&program);
-        self.build_methods_env(&program);
-
-        let mut seen_attributes = HashMap::with_capacity(16);
-        let mut seen_methods = HashMap::with_capacity(16);
+        self.build_classes_env(&program);
 
         let classes = program
             .classes
             .into_iter()
-            .map(|class| self.check_class(class, &mut seen_attributes, &mut seen_methods))
+            .map(|class| self.check_class(class))
             .collect();
         let program = Program { classes };
 
@@ -63,53 +62,26 @@ impl Checker<'_> {
         }
     }
 
-    fn check_class(
-        &mut self,
-        class: ast::Class,
-        seen_attributes: &mut HashMap<Interned<str>, Span>,
-        seen_methods: &mut HashMap<Interned<str>, Span>,
-    ) -> ast::Class<Type> {
-        fn assert_unseen(
-            c: &mut Checker,
-            map: &mut HashMap<Interned<str>, Span>,
-            ident: ast::Ident,
-            error: impl Fn(Span) -> Error,
-        ) {
-            if let Some(&prev) = map.get(&ident.name) {
-                c.errors.push(ident.span.wrap(error(prev)));
-            } else {
-                map.insert(ident.name, ident.span);
-            }
-        }
-
-        seen_attributes.clear();
-        seen_methods.clear();
-
+    fn check_class(&mut self, class: ast::Class) -> ast::Class<Type> {
         self.current_class = class.name.name();
-        let scope = self.get_class_scope(&class);
+        let scope = Rc::clone(&self.classes[&class.name.name()].attributes);
+        let scope = Scope::Class(scope);
         let features = self.scoped(scope, move |this| {
-            class
-                .features
-                .into_iter()
-                .map(|feature| match feature {
-                    ast::Feature::Attribute(binding) => {
-                        assert_unseen(this, seen_attributes, binding.name, |other| {
-                            Error::DuplicateAttributeInClass {
-                                other_definition_span: other,
-                            }
-                        });
-                        ast::Feature::Attribute(this.check_binding(binding))
-                    }
-                    ast::Feature::Method(method) => {
-                        assert_unseen(this, seen_methods, method.name, |other| {
-                            Error::DuplicateMethodInClass {
-                                other_definition_span: other,
-                            }
-                        });
-                        ast::Feature::Method(this.check_method(method))
-                    }
-                })
-                .collect()
+            let self_scope = Scope::Unit(well_known::SELF, this.get_current_class());
+            this.scoped(self_scope, |this| {
+                class
+                    .features
+                    .into_iter()
+                    .map(|feature| match feature {
+                        ast::Feature::Attribute(binding) => {
+                            ast::Feature::Attribute(this.check_binding(binding))
+                        }
+                        ast::Feature::Method(method) => {
+                            ast::Feature::Method(this.check_method(method))
+                        }
+                    })
+                    .collect()
+            })
         });
         ast::Class {
             name: self.get_type(class.name),
@@ -205,9 +177,9 @@ impl Checker<'_> {
                 };
 
                 let maybe_sig = self
-                    .class_methods
+                    .classes
                     .get(&qualifier_ty.name())
-                    .and_then(|class_methods| class_methods.get(&method.name))
+                    .and_then(|class_methods| class_methods.methods.get(&method.name))
                     .map(Rc::clone);
 
                 // If the signature is not defined, register an error.
@@ -319,7 +291,7 @@ impl Checker<'_> {
                             self.errors.push(arm.ty.span().wrap(error));
                         }
                         seen.insert(ty.name());
-                        let scope = Scope::from([(arm.name.name, ty.clone())]);
+                        let scope = Scope::Unit(arm.name.name, ty.clone());
                         let body = self.scoped(scope, |this| this.check_expr(*arm.body));
                         lub = lub.lub(&body.ty);
 
@@ -410,7 +382,7 @@ impl Checker<'_> {
         }
     }
 
-    fn build_methods_env(&mut self, program: &Program) {
+    fn build_classes_env(&mut self, program: &Program) {
         let classes: BTreeMap<_, _> = {
             // We first create the environment with the builtins.
             // For now, they don't have any methods.
@@ -429,63 +401,108 @@ impl Checker<'_> {
         // in this loop.
         for class in classes.values() {
             let class_ty = self.get_type(class.name);
-            self.define_class_methods(&classes, &class_ty);
+            self.define_class_env(
+                &classes,
+                &class_ty,
+                &mut HashMap::with_capacity(16),
+                &mut HashMap::with_capacity(16),
+            );
         }
     }
 
     /// Define the methods map for a single class and all of its parents.
-    ///
-    /// Notice that this method doesn't perform any type checking besides
-    /// checking whether overridden signatures are compatible.
-    fn define_class_methods(
+    fn define_class_env(
         &mut self,
         classes: &BTreeMap<Interned<str>, Cow<'_, ast::Class>>,
         class_ty: &Type,
+        seen_attributes: &mut HashMap<Interned<str>, Span>,
+        seen_methods: &mut HashMap<Interned<str>, Span>,
     ) {
-        if self.class_methods.contains_key(&class_ty.name()) {
+        fn assert_unseen_in_class(
+            c: &mut Checker,
+            map: &mut HashMap<Interned<str>, Span>,
+            ident: ast::Ident,
+            error: impl Fn(Span) -> Error,
+        ) {
+            if let Some(&prev) = map.get(&ident.name) {
+                c.errors.push(ident.span.wrap(error(prev)));
+            } else {
+                map.insert(ident.name, ident.span);
+            }
+        }
+
+        seen_attributes.clear();
+        seen_methods.clear();
+
+        if self.classes.contains_key(&class_ty.name()) {
             return; // Already defined methods for this class.
         }
 
-        let inherited_methods = if let Some(parent_ty) = class_ty.parent() {
-            // If we have a parent, define its methods environment before the
-            // (current) child class.
-            self.define_class_methods(classes, parent_ty);
-            Rc::clone(&self.class_methods[&parent_ty.name()])
+        let parent = if let Some(parent_ty) = class_ty.parent() {
+            // If we have a parent, define its environment before the current
+            // (child) class.
+            self.define_class_env(classes, parent_ty, seen_attributes, seen_methods);
+            ClassEnv::clone(&self.classes[&parent_ty.name()])
         } else {
-            Rc::new(HashMap::with_capacity(0))
+            ClassEnv::default()
         };
 
-        let methods_map = 'block: {
+        // This builder keeps track of whether any method or attribute is
+        // inserted. If not, the built env will point out to the parent's one.
+        let mut current = parent.builder();
+
+        let env = 'block: {
             let Some(class) = classes.get(&class_ty.name()) else {
-                // If the current class is not defined, we just consider return
-                // and keep recursing to build the chain. Notice that we
-                // couldn't `return` here to keep building the chain.
-                break 'block inherited_methods;
+                // If the current class is not defined, we just return the
+                // parent's class env. Notice that we couldn't `return` or fail
+                // early here—otherwise, we would break the recursive chain.
+                break 'block parent;
             };
-            let mut methods = Self::get_class_methods(class).peekable();
 
-            if methods.peek().is_none() {
-                // If this class doesn't define any methods, we simply point to
-                // the parent's definition.
-                break 'block inherited_methods;
-            }
-
-            let new_methods = methods.map(|method| {
-                let sig = MethodSignature {
-                    formals: method.formals.clone(),
-                    return_ty: method.return_ty,
-                };
-                if let Some(parent_sig) = inherited_methods.get(&method.name.name) {
-                    self.assert_is_compatible_signature(&sig, parent_sig, method.name.span);
+            for feature in &class.features {
+                match feature {
+                    ast::Feature::Attribute(binding) => {
+                        let name = binding.name.name;
+                        // Make sure the attribute is not seen in this class
+                        assert_unseen_in_class(self, seen_attributes, binding.name, |other| {
+                            Error::DuplicateAttributeInClass { other }
+                        });
+                        // Make sure the attribute is not being redefined
+                        if let Some(parent_attr) = parent.attributes.get(&name) {
+                            let other = parent_attr.declaration_span;
+                            let error = Error::IllegalAttributeOverride { other };
+                            self.errors.push(binding.name.span.wrap(error));
+                        }
+                        let attr = ClassAttribute {
+                            declaration_span: binding.name.span,
+                            ty: self.get_type_allowing_self_type(binding.ty),
+                            order: current.next_attribute_order(),
+                        };
+                        current.add_attribute(name, attr);
+                    }
+                    ast::Feature::Method(method) => {
+                        let name = method.name.name;
+                        assert_unseen_in_class(self, seen_attributes, method.name, |other| {
+                            Error::DuplicateMethodInClass { other }
+                        });
+                        let mut sig = ClassMethodSignature {
+                            formals: method.formals.clone(),
+                            return_ty: method.return_ty,
+                            order: current.next_method_order(),
+                        };
+                        if let Some(parent_sig) = parent.methods.get(&name) {
+                            self.assert_is_compatible_signature(&sig, parent_sig, method.name.span);
+                            // An inherited method should use the same order.
+                            sig.order = parent_sig.order;
+                        }
+                        current.add_method(name, sig);
+                    }
                 }
-                (method.name.name, Rc::new(sig))
-            });
-            let mut cloned_methods = HashMap::clone(&inherited_methods);
-            cloned_methods.extend(new_methods);
-            Rc::new(cloned_methods)
+            }
+            current.build()
         };
 
-        let old = self.class_methods.insert(class_ty.name(), methods_map);
+        let old = self.classes.insert(class_ty.name(), env);
         assert!(old.is_none());
     }
 
@@ -515,10 +532,10 @@ impl Checker<'_> {
             let current_span = class.name.span();
 
             if discovered.contains_key(&class_name) {
-                let (other_span, _) = discovered[&class_name];
+                let (other, _) = discovered[&class_name];
                 let error = Error::DuplicateTypeDefinition {
                     name: class_name,
-                    other_definition_span: other_span,
+                    other,
                 };
                 self.errors.push(current_span.wrap(error));
                 continue;
@@ -681,8 +698,8 @@ impl Checker<'_> {
     /// overridden.
     pub fn assert_is_compatible_signature(
         &mut self,
-        child_sig: &MethodSignature,
-        parent_sig: &MethodSignature,
+        child_sig: &ClassMethodSignature,
+        parent_sig: &ClassMethodSignature,
         current_method_name_span: Span,
     ) {
         let actual = child_sig;
@@ -729,7 +746,7 @@ impl Checker<'_> {
     /// registered error if not find.
     fn lookup_scope(&mut self, ident: &ast::Ident) -> Type {
         for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(&ident.name) {
+            if let Some(ty) = scope.get(ident.name) {
                 return ty.clone();
             }
         }
@@ -743,37 +760,6 @@ impl Checker<'_> {
         let res = f(self);
         self.scopes.pop();
         res
-    }
-
-    fn get_class_methods(class: &ast::Class) -> impl Iterator<Item = &ast::Method> + '_ {
-        class.features.iter().filter_map(move |feature| {
-            if let ast::Feature::Method(method) = feature {
-                Some(method)
-            } else {
-                None
-            }
-        })
-    }
-
-    fn get_class_scope(&mut self, class: &ast::Class) -> Scope {
-        // self : SELF_TYPE
-        let current_class = self.get_current_class();
-
-        class
-            .features
-            .iter()
-            .filter_map(|feature| {
-                if let ast::Feature::Attribute(binding) = feature {
-                    Some((
-                        binding.name.name,
-                        self.get_type_allowing_self_type(binding.ty),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .chain([(well_known::SELF, current_class)])
-            .collect()
     }
 
     fn get_typed_formals_and_scope(
@@ -792,7 +778,7 @@ impl Checker<'_> {
                 }
             })
             .collect();
-        (formals, scope)
+        (formals, scope.build())
     }
 
     /// NOTE: Resolves bindings' types allowing for `SELF_TYPE`!
@@ -817,7 +803,7 @@ impl Checker<'_> {
                 }
             })
             .collect();
-        (bindings, scope)
+        (bindings, scope.build())
     }
 }
 
@@ -825,13 +811,16 @@ impl Checker<'_> {
 pub enum Error {
     DuplicateTypeDefinition {
         name: Interned<str>,
-        other_definition_span: Span,
+        other: Span,
     },
     DuplicateMethodInClass {
-        other_definition_span: Span,
+        other: Span,
     },
     DuplicateAttributeInClass {
-        other_definition_span: Span,
+        other: Span,
+    },
+    IllegalAttributeOverride {
+        other: Span,
     },
     DuplicateCaseArmDiscriminant {
         name: Interned<str>,
@@ -873,23 +862,147 @@ pub enum Error {
     },
 }
 
-type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
+pub type DiscoveredClasses = HashMap<Interned<str>, (Span, Option<TypeName>)>;
 
-/// Maps a class name to a map of methods, which maps a method name to its
-/// corresponding signature. We use a [`Rc`] to have COW semantics, such that a
-/// child class has the same method map from its parent unless the former
+/// Maps a class name to a map of methods and a map of attributes.
+pub type ClassesEnv = HashMap<Interned<str>, ClassEnv>;
+
+/// A class environment. We use a [`Rc`] to have copy-on-write semantics, such
+/// that a child class has the same method map from its parent unless the former
 /// defines a new method (which may even override some of the parent's methods).
-type MethodsEnv = HashMap<Interned<str>, Rc<HashMap<Interned<str>, Rc<MethodSignature>>>>;
+#[derive(Clone, Default)]
+pub struct ClassEnv {
+    pub attributes: Rc<ClassAttributes>,
+    pub methods: Rc<ClassMethods>,
+}
 
-type Scope = HashMap<Interned<str>, Type>;
+impl ClassEnv {
+    fn builder(&self) -> ClassEnvBuilder {
+        ClassEnvBuilder {
+            parent_attributes: Rc::clone(&self.attributes),
+            parent_methods: Rc::clone(&self.methods),
+            current_attributes: None,
+            current_methods: None,
+        }
+    }
+}
+
+pub type ClassAttributes = HashMap<Interned<str>, Rc<ClassAttribute>>;
+pub type ClassMethods = HashMap<Interned<str>, Rc<ClassMethodSignature>>;
+
+pub struct ClassAttribute {
+    pub declaration_span: Span,
+    pub ty: Type,
+    pub order: u32,
+}
 
 /// A method signature. Notice that formal parameters and the return use the
 /// nominal [`TypeName`] since when dispatching method, one needs to
 /// differentiate between an unresolved (nominal) `SELF_TYPE` and other types.
-#[derive(Debug, Clone)]
-pub struct MethodSignature {
+pub struct ClassMethodSignature {
     pub formals: Vec<ast::Formal<TypeName>>,
     pub return_ty: TypeName,
+    pub order: u32,
+}
+
+struct ClassEnvBuilder {
+    parent_attributes: Rc<ClassAttributes>,
+    parent_methods: Rc<ClassMethods>,
+    current_attributes: Option<ClassAttributes>,
+    current_methods: Option<ClassMethods>,
+}
+
+impl ClassEnvBuilder {
+    fn add_attribute(&mut self, name: Interned<str>, attribute: ClassAttribute) {
+        self.current_attributes
+            .get_or_insert_with(|| ClassAttributes::clone(&self.parent_attributes))
+            .insert(name, Rc::new(attribute));
+    }
+
+    fn add_method(&mut self, name: Interned<str>, sig: ClassMethodSignature) {
+        self.current_methods
+            .get_or_insert_with(|| ClassMethods::clone(&self.parent_methods))
+            .insert(name, Rc::new(sig));
+    }
+
+    fn next_attribute_order(&self) -> u32 {
+        1 + u32::try_from(
+            self.current_attributes
+                .as_ref()
+                .unwrap_or(&*self.parent_attributes)
+                .len(),
+        )
+        .unwrap()
+    }
+
+    fn next_method_order(&self) -> u32 {
+        1 + u32::try_from(
+            self.current_methods
+                .as_ref()
+                .unwrap_or(&*self.parent_methods)
+                .len(),
+        )
+        .unwrap()
+    }
+
+    fn build(self) -> ClassEnv {
+        ClassEnv {
+            attributes: self
+                .current_attributes
+                .map(Rc::new)
+                .unwrap_or(self.parent_attributes),
+            methods: self
+                .current_methods
+                .map(Rc::new)
+                .unwrap_or(self.parent_methods),
+        }
+    }
+}
+
+enum Scope {
+    Unit(Interned<str>, Type),
+    Multi(Rc<HashMap<Interned<str>, Type>>),
+    Class(Rc<ClassAttributes>),
+    Null,
+}
+
+impl Scope {
+    fn get(&self, key: Interned<str>) -> Option<&Type> {
+        match self {
+            Scope::Unit(name, ty) if *name == key => Some(ty),
+            Scope::Unit(_, _) => None,
+            Scope::Multi(map) => map.get(&key),
+            Scope::Class(map) => map.get(&key).map(|attr| &attr.ty),
+            Scope::Null => None,
+        }
+    }
+
+    fn with_capacity(capacity: usize) -> ScopeBuilder {
+        ScopeBuilder {
+            map: HashMap::with_capacity(capacity),
+        }
+    }
+}
+
+struct ScopeBuilder {
+    map: HashMap<Interned<str>, Type>,
+}
+
+impl ScopeBuilder {
+    fn insert(&mut self, name: Interned<str>, ty: Type) -> Option<Type> {
+        self.map.insert(name, ty)
+    }
+
+    fn build(self) -> Scope {
+        match self.map.len() {
+            0 => Scope::Null,
+            1 => {
+                let (name, ty) = self.map.into_iter().next().unwrap();
+                Scope::Unit(name, ty)
+            }
+            _ => Scope::Multi(Rc::new(self.map)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -899,7 +1012,7 @@ mod tests {
 
     use crate::{
         parser::test_utils::parse_program,
-        type_checker::{Checker, MethodsEnv},
+        type_checker::{Checker, ClassesEnv},
         util::{
             intern::Interner,
             test_utils::{assert_errors, tree_tests},
@@ -1451,6 +1564,7 @@ mod tests {
 
         fn test_multiple_declarations_of_same_name_errors() {
             let program = "
+                class A {};
                 class A {
                     attr : Int;
                     attr : Int;
@@ -1458,13 +1572,24 @@ mod tests {
                     method() : Int { 0 };
                     method() : Int { 1 };
                 };
-                class A {};
             ";
             let expected_errors = &[
-                "217..218: class A already defined at 23..24",
-                "79..83: attribute with same name already defined at 47..51",
-                "154..160: method with same name already defined at 112..118",
+                "51..52: class A already defined at 23..24",
+                "107..111: attribute with same name already defined at 75..79",
+                "182..188: method with same name already defined at 140..146",
             ];
+        }
+
+        fn test_fails_when_override_attribute() {
+            let program = "
+                class A {
+                    name: String;
+                };
+                class B inherits A {
+                    name: String;
+                };
+            ";
+            let expected_errors = &["137..141: can't override attribute defined at 47..51"];
         }
 
         fn test_fails_to_inherit_class_with_undefined_name() {
@@ -1499,6 +1624,39 @@ mod tests {
                     int 3 (134..135 %: Int)
                   attribute d: A (initialized)
                     ident self (174..178 %: A)
+            ";
+        }
+
+        fn test_inherited_attribute_scope_ok() {
+            let program = "
+                class A {
+                    a : Int <- 1;
+                    b : Int <- a + b;
+                };
+                class B inherits A {
+                    c : Int <- a + b + c;
+                    d : Int <- c + d;
+                };
+            ";
+            let tree_ok = "
+                class A
+                  attribute a: Int (initialized)
+                    int 1 (58..59 %: Int)
+                  attribute b: Int (initialized)
+                    binary Add (92..97 %: Int)
+                      ident a (92..93 %: Int)
+                      ident b (96..97 %: Int)
+                class B inherits A
+                  attribute c: Int (initialized)
+                    binary Add (186..195 %: Int)
+                      binary Add (186..191 %: Int)
+                        ident a (186..187 %: Int)
+                        ident b (190..191 %: Int)
+                      ident c (194..195 %: Int)
+                  attribute d: Int (initialized)
+                    binary Add (228..233 %: Int)
+                      ident c (228..229 %: Int)
+                      ident d (232..233 %: Int)
             ";
         }
 
@@ -1716,10 +1874,10 @@ mod tests {
         );
         let mut checker = Checker::with_capacity(&mut i, 16);
         checker.build_type_registry(&prog);
-        checker.build_methods_env(&prog);
+        checker.build_classes_env(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
-            fmt_methods(checker.ident_interner, &checker.class_methods),
+            fmt_methods(checker.ident_interner, &checker.classes),
             BTreeMap::from([
                 (
                     ("A", "a1"),
@@ -1771,10 +1929,10 @@ mod tests {
         );
         let mut checker = Checker::with_capacity(&mut i, 16);
         checker.build_type_registry(&prog);
-        checker.build_methods_env(&prog);
+        checker.build_classes_env(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
-            fmt_methods(checker.ident_interner, &checker.class_methods),
+            fmt_methods(checker.ident_interner, &checker.classes),
             BTreeMap::from([
                 (("A", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
                 (("B", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
@@ -1807,25 +1965,28 @@ mod tests {
 
     fn fmt_methods<'i>(
         i: &'i Interner<str>,
-        methods: &MethodsEnv,
+        methods: &ClassesEnv,
     ) -> BTreeMap<(&'i str, &'i str), Vec<(&'i str, &'i str)>> {
         methods
             .iter()
-            .flat_map(|(class_name, class_methods)| {
-                class_methods.iter().filter_map(move |(method_name, sig)| {
-                    let name = i.get(method_name);
-                    if name == "abort" || name == "type_name" || name == "copy" {
-                        return None;
-                    }
-                    let k = (i.get(class_name), name);
-                    let v = sig
-                        .formals
-                        .iter()
-                        .map(|f| (i.get(f.name), i.get(f.ty.name())))
-                        .chain([("<ret>", i.get(sig.return_ty.name()))])
-                        .collect();
-                    Some((k, v))
-                })
+            .flat_map(|(class_name, class_env)| {
+                class_env
+                    .methods
+                    .iter()
+                    .filter_map(move |(method_name, sig)| {
+                        let name = i.get(method_name);
+                        if name == "abort" || name == "type_name" || name == "copy" {
+                            return None;
+                        }
+                        let k = (i.get(class_name), name);
+                        let v = sig
+                            .formals
+                            .iter()
+                            .map(|f| (i.get(f.name), i.get(f.ty.name())))
+                            .chain([("<ret>", i.get(sig.return_ty.name()))])
+                            .collect();
+                        Some((k, v))
+                    })
             })
             .collect()
     }

@@ -18,28 +18,18 @@ impl Show for Spanned<type_checker::Error> {
 
         use type_checker::Error::*;
         match error {
-            DuplicateTypeDefinition {
-                name,
-                other_definition_span,
-            } => {
+            DuplicateTypeDefinition { name, other } => {
                 let name = i.get(name);
-                write!(f, "class {name} already defined at {other_definition_span}")
+                write!(f, "class {name} already defined at {other}")
             }
-            DuplicateMethodInClass {
-                other_definition_span,
-            } => {
-                write!(
-                    f,
-                    "method with same name already defined at {other_definition_span}"
-                )
+            DuplicateMethodInClass { other } => {
+                write!(f, "method with same name already defined at {other}")
             }
-            DuplicateAttributeInClass {
-                other_definition_span,
-            } => {
-                write!(
-                    f,
-                    "attribute with same name already defined at {other_definition_span}"
-                )
+            DuplicateAttributeInClass { other } => {
+                write!(f, "attribute with same name already defined at {other}")
+            }
+            IllegalAttributeOverride { other } => {
+                write!(f, "can't override attribute defined at {other}")
             }
             DuplicateCaseArmDiscriminant { name } => {
                 let name = i.get(name);
