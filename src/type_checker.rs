@@ -466,7 +466,7 @@ impl Checker<'_> {
                     return_ty: method.return_ty,
                 };
                 if let Some(parent_sig) = inherited_methods.get(&method.name.name) {
-                    self.assert_is_signature_match(&sig, parent_sig, method.name.span);
+                    self.assert_is_compatible_signature(&sig, parent_sig, method.name.span);
                 }
                 (method.name.name, Rc::new(sig))
             });
@@ -584,7 +584,10 @@ impl Checker<'_> {
     /// If the type is not present, returns [`builtins::NO_TYPE`]. Notice that,
     /// unlike [`Self::get_type`], this method does **NOT** registers any type
     /// errors if the type is not defined.
+    ///
+    /// Panics if provided type name is self type.
     fn get_type_no_error(&self, ty: TypeName) -> Type {
+        assert_ne!(ty.name(), well_known::SELF_TYPE);
         self.registry
             .get(ty.name())
             .unwrap_or_else(|| self.must_get_type(builtins::NO_TYPE))
@@ -666,7 +669,7 @@ impl Checker<'_> {
     /// for error messages, the first method should be the scrutiny (the
     /// overriding class), and the second should be the parent—which is being
     /// overridden.
-    pub fn assert_is_signature_match(
+    pub fn assert_is_compatible_signature(
         &mut self,
         child_sig: &MethodSignature,
         parent_sig: &MethodSignature,
@@ -694,12 +697,16 @@ impl Checker<'_> {
             }
         }
 
-        let actual_ret = self.get_type_no_error(actual.return_ty);
-        let expected_ret = self.get_type_no_error(expected.return_ty);
+        // Here we compare return types by their untyped name (`TypeName`) since
+        // we must consider two signatures returning `SELF_TYPE` as compatible.
+        // By resolving types first and then comparing then, the signatures
+        // wouldn't match since each `SELF_TYPE` would be resolved differently.
+        let actual_ret = TypeName::name(&actual.return_ty);
+        let expected_ret = TypeName::name(&expected.return_ty);
         if actual_ret != expected_ret {
             let error = Error::OverriddenWithIncorrectReturnType {
-                actual: actual_ret.name(),
-                expected: expected_ret.name(),
+                actual: actual_ret,
+                expected: expected_ret,
             };
             self.errors.push(actual.return_ty.span().wrap(error));
         }
@@ -1259,7 +1266,7 @@ mod tests {
             ";
         }
 
-        fn test_method_override_ok() {
+        fn test_method_override_compatible_ok() {
             let program = "
                 class A {
                     foo(p: Int) : Bool { true };
@@ -1275,6 +1282,25 @@ mod tests {
                 class B inherits A
                   method foo(p: Int) : Bool
                     bool false (173..178 %: Bool)
+            ";
+        }
+
+        fn test_method_override_self_type_compatible_ok() {
+            let program = "
+                class A {
+                    foo() : SELF_TYPE { self };
+                };
+                class B inherits A {
+                    foo() : SELF_TYPE { self };
+                };
+            ";
+            let tree_ok = "
+                class A
+                  method foo() : A
+                    ident self (67..71 %: A)
+                class B inherits A
+                  method foo() : B
+                    ident self (171..175 %: B)
             ";
         }
 
