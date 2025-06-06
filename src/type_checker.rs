@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     rc::Rc,
 };
 
@@ -307,12 +307,18 @@ impl Checker<'_> {
                 (ExprKind::Let { bindings, body }, ty)
             }
             ExprKind::Case { predicate, arms } => {
+                let mut seen = HashSet::with_capacity(arms.len());
                 let mut lub = self.must_get_type(builtins::NO_TYPE);
                 let predicate = Box::new(self.check_expr(*predicate));
                 let arms = arms
                     .into_iter()
                     .map(|arm| {
                         let ty = self.get_type(arm.ty);
+                        if seen.contains(&ty.name()) {
+                            let error = Error::DuplicateCaseArmDiscriminant { name: ty.name() };
+                            self.errors.push(arm.ty.span().wrap(error));
+                        }
+                        seen.insert(ty.name());
                         let scope = Scope::from([(arm.name.name, ty.clone())]);
                         let body = self.scoped(scope, |this| this.check_expr(*arm.body));
                         lub = lub.lub(&body.ty);
@@ -827,6 +833,9 @@ pub enum Error {
     DuplicateAttributeInClass {
         other_definition_span: Span,
     },
+    DuplicateCaseArmDiscriminant {
+        name: Interned<str>,
+    },
     UndefinedType(Interned<str>),
     UndefinedName(Interned<str>),
     Unassignable {
@@ -1029,7 +1038,7 @@ mod tests {
             "#;
         }
 
-        fn test_case() {
+        fn test_case_ok() {
             let expr = "
                 case 1 of
                     n : Int => n;
@@ -1044,6 +1053,17 @@ mod tests {
                   arm s: String =>
                     ident s (95..96 %: String)
             ";
+        }
+
+        fn test_case_fails_with_duplicate_discriminant() {
+            let expr = "
+                case 1 of
+                    n : Int => n;
+                    s : String => s;
+                    n2 : Int => n2;
+                esac
+            ";
+            let expected_errors = &["123..126: type Int already in use as arm discriminant"];
         }
 
         fn test_assign_ok() {

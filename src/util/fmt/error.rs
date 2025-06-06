@@ -41,6 +41,10 @@ impl Show for Spanned<type_checker::Error> {
                     "attribute with same name already defined at {other_definition_span}"
                 )
             }
+            DuplicateCaseArmDiscriminant { name } => {
+                let name = i.get(name);
+                write!(f, "type {name} already in use as arm discriminant")
+            }
             UndefinedType(name) => {
                 let name = i.get(name);
                 write!(f, "class {name} is not defined")
