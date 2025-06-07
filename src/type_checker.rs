@@ -1904,6 +1904,10 @@ mod tests {
                 (("A", "a3"), vec![("<ret>", "Int")]),
                 (("A", "a4"), vec![("<ret>", "Int")]),
                 (("B", "b1"), vec![("<ret>", "Int")]),
+                (
+                    ("IO", "exit"),
+                    vec![("status", "Int"), ("<ret>", "<no-type>")]
+                ),
                 (("IO", "in_int"), vec![("<ret>", "Int")]),
                 (("IO", "in_string"), vec![("<ret>", "String")]),
                 (
@@ -1957,6 +1961,10 @@ mod tests {
                 (("C", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
                 (("D", "a1"), vec![("a", "String"), ("<ret>", "Int")]),
                 (("D", "d1"), vec![("d", "Int"), ("<ret>", "Int")]),
+                (
+                    ("IO", "exit"),
+                    vec![("status", "Int"), ("<ret>", "<no-type>")]
+                ),
                 (("IO", "in_int"), vec![("<ret>", "Int")]),
                 (("IO", "in_string"), vec![("<ret>", "String")]),
                 (

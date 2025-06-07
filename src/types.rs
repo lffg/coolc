@@ -224,6 +224,7 @@ pub mod builtins {
             out_int(x: Int) : SELF_TYPE;
             in_string(): String;
             in_int(): Int;
+            exit(status: Int) : "<no-type>";
         };
     }
 
@@ -294,7 +295,7 @@ pub mod builtins {
                     inherits $inherited:ident
                 {
                     $(
-                        $method:ident ($($arg_name:ident : $arg_ty:ty),*) : $ret_ty:ident ;
+                        $method:ident ($($arg_name:ident : $arg_ty:ty),*) : $ret_ty:tt ;
                     )*
                 };
             )*
@@ -324,7 +325,7 @@ pub mod builtins {
                                     args: &[
                                         $((stringify!($arg_name), stringify!($arg_ty)),)*
                                     ],
-                                    ret: stringify!($ret_ty),
+                                    ret: define_methods!(@@ret_ty, $ret_ty),
                                 },
                             )*
                         ],
@@ -336,6 +337,8 @@ pub mod builtins {
         (@@inherits, $name:ident) => {
             Some(crate::types::builtins::$name)
         };
+        (@@ret_ty, $ret:ident) => { stringify!($ret) };
+        (@@ret_ty, $ret:expr) => { $ret };
     }
     use define_methods;
 }
