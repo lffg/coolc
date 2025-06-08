@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap, HashSet},
+    iter,
     rc::Rc,
 };
 
@@ -16,7 +17,7 @@ pub type ParseResult<T> = Result<T, (T, Vec<Spanned<Error>>)>;
 pub struct Checker<'ident> {
     registry: TypeRegistry,
     /// O environment.
-    scopes: Vec<Scope>,
+    symbol_table: SymbolTable,
     /// M environment is contained here.
     ///
     /// Here we keep a record of every method and attribute of each class.
@@ -32,7 +33,7 @@ impl Checker<'_> {
         Checker {
             registry: TypeRegistry::with_capacity(capacity),
             classes: HashMap::with_capacity(0),
-            scopes: Vec::with_capacity(24),
+            symbol_table: SymbolTable::with_capacity(24),
             current_class: builtins::NO_TYPE,
             errors: Vec::with_capacity(8),
             ident_interner,
@@ -64,24 +65,22 @@ impl Checker<'_> {
 
     fn check_class(&mut self, class: ast::Class<Untyped>) -> ast::Class<Typed> {
         self.current_class = class.name.name();
-        let scope = Rc::clone(&self.classes[&class.name.name()].attributes);
-        let scope = Scope::Class(scope);
-        let features = self.scoped(scope, move |this| {
-            let self_scope = Scope::Unit(well_known::SELF, this.get_current_class());
-            this.scoped(self_scope, |this| {
-                class
-                    .features
-                    .into_iter()
-                    .map(|feature| match feature {
-                        ast::Feature::Attribute(binding) => {
+        let attributes = Rc::clone(&self.classes[&class.name.name()].attributes);
+        let current_class = self.get_current_class();
+        let features = self.scoped_attributes(attributes, move |this| {
+            class
+                .features
+                .into_iter()
+                .map(|feature| match feature {
+                    ast::Feature::Attribute(binding) => {
+                        // Add `self` to scope of attribute initializer
+                        this.scoped_formals(current_class.clone(), &[], |this| {
                             ast::Feature::Attribute(this.check_binding(binding))
-                        }
-                        ast::Feature::Method(method) => {
-                            ast::Feature::Method(this.check_method(method))
-                        }
-                    })
-                    .collect()
-            })
+                        })
+                    }
+                    ast::Feature::Method(method) => ast::Feature::Method(this.check_method(method)),
+                })
+                .collect()
         });
         ast::Class {
             name: self.get_type(class.name),
@@ -105,8 +104,21 @@ impl Checker<'_> {
     }
 
     fn check_method(&mut self, method: ast::Method<Untyped>) -> ast::Method<Typed> {
-        let (formals, scope) = self.get_typed_formals_and_scope(method.formals);
-        let body = self.scoped(scope, |this| this.check_expr(method.body));
+        let formals: Vec<_> = method
+            .formals
+            .into_iter()
+            .map(|formal| {
+                let ty = self.get_type(formal.ty);
+                ast::Formal {
+                    name: formal.name,
+                    ty,
+                }
+            })
+            .collect();
+
+        let body = self.scoped_formals(self.get_current_class(), &formals, |this| {
+            this.check_expr(method.body)
+        });
         let return_ty = self.get_type_allowing_self_type(method.return_ty);
         self.assert_is_subtype(body.ty(), &return_ty, body.span);
         ast::Method {
@@ -119,16 +131,25 @@ impl Checker<'_> {
 
     fn check_expr(&mut self, expr: Expr<Untyped>) -> Expr<Typed> {
         let (kind, ty) = match expr.kind {
-            ExprKind::Assignment { target, value } => {
+            ExprKind::Assignment {
+                target,
+                value,
+                info: (),
+            } => {
                 if target.name == well_known::SELF {
                     let error = Error::IllegalAssignmentToSelf;
                     self.errors.push(target.span.wrap(error));
                 }
-                let target_ty = self.lookup_scope(&target);
+                let symbol = self.lookup_scope(&target);
                 let value = Box::new(self.check_expr(*value));
                 let value_ty = value.ty().clone();
-                self.assert_is_subtype(&value_ty, &target_ty, value.span);
-                (ExprKind::Assignment { target, value }, value_ty)
+                self.assert_is_subtype(&value_ty, &symbol.ty, value.span);
+                let assignment = ExprKind::Assignment {
+                    target,
+                    value,
+                    info: symbol,
+                };
+                (assignment, value_ty)
             }
             ExprKind::Dispatch {
                 qualifier,
@@ -271,14 +292,31 @@ impl Checker<'_> {
                     .clone();
                 (ExprKind::Block { body }, last_ty)
             }
-            ExprKind::Let { bindings, body } => {
+            ExprKind::Let { mut bindings, body } => {
                 if 1 < bindings.len() {
                     return self.check_expr(ast::desugar::multi_binding_let(
                         bindings, body, expr.span, &expr.info,
                     ));
                 }
-                let (bindings, scope) = self.get_typed_bindings_and_scope(bindings);
-                let body = self.scoped(scope, |this| this.check_expr(*body));
+
+                let binding = {
+                    assert_eq!(bindings.len(), 1);
+                    let binding = bindings.remove(0); // untyped
+                    let ty = self.get_type_allowing_self_type(binding.ty);
+                    ast::Binding {
+                        name: binding.name,
+                        initializer: binding.initializer.map(|i| {
+                            let expr = self.check_expr(i);
+                            self.assert_is_subtype(expr.ty(), &ty, expr.span);
+                            expr
+                        }),
+                        ty,
+                    }
+                };
+                let body = self.scoped_local(binding.name.name, binding.ty.clone(), |this| {
+                    this.check_expr(*body)
+                });
+                let bindings = vec![binding];
                 let ty = body.ty().clone();
                 let body = Box::new(body);
                 (ExprKind::Let { bindings, body }, ty)
@@ -296,8 +334,11 @@ impl Checker<'_> {
                             self.errors.push(arm.ty.span().wrap(error));
                         }
                         seen.insert(ty.name());
-                        let scope = Scope::Unit(arm.name.name, ty.clone());
-                        let body = self.scoped(scope, |this| this.check_expr(*arm.body));
+
+                        let body = self.scoped_local(arm.name.name, ty.clone(), |this| {
+                            this.check_expr(*arm.body)
+                        });
+
                         lub = lub.lub(body.ty());
 
                         ast::CaseArm {
@@ -369,9 +410,9 @@ impl Checker<'_> {
                 (ExprKind::Paren(expr), ty)
             }
             ExprKind::Id(ident, ()) => {
-                let ty = self.lookup_scope(&ident);
-                // TODO: Add symbol here.
-                (ExprKind::Id(ident, ()), ty)
+                let symbol = self.lookup_scope(&ident);
+                let ty = symbol.ty.clone();
+                (ExprKind::Id(ident, symbol), ty)
             }
             ExprKind::Int(int) => (ExprKind::Int(int), self.must_get_type(builtins::INT)),
             ExprKind::String(string) => (
@@ -746,73 +787,6 @@ impl Checker<'_> {
     }
 }
 
-// Utility functions
-impl Checker<'_> {
-    /// Looks up in the scope stack, or returns [`builtins::NO_TYPE`] with a
-    /// registered error if not find.
-    fn lookup_scope(&mut self, ident: &ast::Ident) -> Type {
-        for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(ident.name) {
-                return ty.clone();
-            }
-        }
-        let error = Error::UndefinedName(ident.name);
-        self.errors.push(ident.span.wrap(error));
-        self.must_get_type(builtins::NO_TYPE)
-    }
-
-    fn scoped<T>(&mut self, scope: Scope, f: impl FnOnce(&mut Self) -> T) -> T {
-        self.scopes.push(scope);
-        let res = f(self);
-        self.scopes.pop();
-        res
-    }
-
-    fn get_typed_formals_and_scope(
-        &mut self,
-        formals: Vec<ast::Formal<Untyped>>,
-    ) -> (Vec<ast::Formal<Typed>>, Scope) {
-        let mut scope = Scope::with_capacity(formals.len());
-        let formals = formals
-            .into_iter()
-            .map(|formal| {
-                let ty = self.get_type(formal.ty);
-                scope.insert(formal.name.name, ty.clone());
-                ast::Formal {
-                    name: formal.name,
-                    ty,
-                }
-            })
-            .collect();
-        (formals, scope.build())
-    }
-
-    /// NOTE: Resolves bindings' types allowing for `SELF_TYPE`!
-    fn get_typed_bindings_and_scope(
-        &mut self,
-        bindings: Vec<ast::Binding<Untyped>>,
-    ) -> (Vec<ast::Binding<Typed>>, Scope) {
-        let mut scope = Scope::with_capacity(bindings.len());
-        let bindings = bindings
-            .into_iter()
-            .map(|binding| {
-                let ty = self.get_type_allowing_self_type(binding.ty);
-                scope.insert(binding.name.name, ty.clone());
-                ast::Binding {
-                    name: binding.name,
-                    initializer: binding.initializer.map(|i| {
-                        let expr = self.check_expr(i);
-                        self.assert_is_subtype(expr.ty(), &ty, expr.span);
-                        expr
-                    }),
-                    ty,
-                }
-            })
-            .collect();
-        (bindings, scope.build())
-    }
-}
-
 #[derive(Copy, Clone, Debug)]
 pub enum Error {
     DuplicateTypeDefinition {
@@ -965,48 +939,132 @@ impl ClassEnvBuilder {
     }
 }
 
+struct SymbolTable {
+    scopes: Vec<Scope>,
+    /// Monotonically increasing (per method) local counter.
+    ///
+    /// Gets reset by [`Checker::scoped_formals`].
+    locals: u32,
+}
+
+/// Symbol-table-related checker utilities.
+impl Checker<'_> {
+    /// Looks up in the scope stack, or returns [`builtins::NO_TYPE`] with a
+    /// registered error if not find.
+    fn lookup_scope(&mut self, ident: &ast::Ident) -> Symbol {
+        for scope in self.symbol_table.scopes.iter().rev() {
+            if let Some(symbol) = scope.get(ident.name) {
+                return symbol;
+            }
+        }
+        let error = Error::UndefinedName(ident.name);
+        self.errors.push(ident.span.wrap(error));
+        Symbol {
+            ty: self.must_get_type(builtins::NO_TYPE),
+            binding: Binding::Undefined,
+        }
+    }
+
+    fn scoped_local<T>(
+        &mut self,
+        name: Interned<str>,
+        ty: Type,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let id = LocalId(self.symbol_table.locals);
+        self.symbol_table.scopes.push(Scope::Local(name, ty, id));
+        self.symbol_table.locals += 1;
+
+        let res = f(self);
+        self.symbol_table.scopes.pop().expect("just pushed");
+        res
+    }
+
+    fn scoped_formals<T>(
+        &mut self,
+        self_ty: Type,
+        formals: &[ast::Formal<Typed>],
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        self.symbol_table.locals = 0;
+
+        let formals = formals.iter().enumerate().map(|(i, formal)| {
+            // +1 since self is the first.
+            let i = 1 + u32::try_from(i).unwrap();
+            (formal.name.name, (formal.ty.clone(), i))
+        });
+        let map = iter::once((well_known::SELF, (self_ty, 0_u32)))
+            .chain(formals)
+            .collect();
+        self.symbol_table.scopes.push(Scope::Formals(Box::new(map)));
+
+        let res = f(self);
+        self.symbol_table.scopes.pop().expect("just pushed");
+        res
+    }
+
+    fn scoped_attributes<T>(
+        &mut self,
+        attributes: Rc<ClassAttributes>,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        self.symbol_table.scopes.push(Scope::Attributes(attributes));
+        let res = f(self);
+        self.symbol_table.scopes.pop().expect("just pushed");
+        res
+    }
+}
+
+impl SymbolTable {
+    fn with_capacity(capacity: usize) -> SymbolTable {
+        SymbolTable {
+            scopes: Vec::with_capacity(capacity),
+            locals: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Symbol {
+    pub ty: Type,
+    pub binding: Binding,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Binding {
+    Local(LocalId),
+    Formal(u32),
+    Attribute(u32),
+    Undefined,
+}
+
+#[derive(Copy, Clone, Debug)]
+#[expect(dead_code)]
+pub struct LocalId(u32);
+
 enum Scope {
-    Unit(Interned<str>, Type),
-    Multi(Rc<HashMap<Interned<str>, Type>>),
-    Class(Rc<ClassAttributes>),
-    Null,
+    Local(Interned<str>, Type, LocalId),
+    #[allow(clippy::box_collection)]
+    Formals(Box<HashMap<Interned<str>, (Type, u32)>>),
+    Attributes(Rc<ClassAttributes>),
 }
 
 impl Scope {
-    fn get(&self, key: Interned<str>) -> Option<&Type> {
+    fn get(&self, name: Interned<str>) -> Option<Symbol> {
         match self {
-            Scope::Unit(name, ty) if *name == key => Some(ty),
-            Scope::Unit(_, _) => None,
-            Scope::Multi(map) => map.get(&key),
-            Scope::Class(map) => map.get(&key).map(|attr| &attr.ty),
-            Scope::Null => None,
-        }
-    }
-
-    fn with_capacity(capacity: usize) -> ScopeBuilder {
-        ScopeBuilder {
-            map: HashMap::with_capacity(capacity),
-        }
-    }
-}
-
-struct ScopeBuilder {
-    map: HashMap<Interned<str>, Type>,
-}
-
-impl ScopeBuilder {
-    fn insert(&mut self, name: Interned<str>, ty: Type) -> Option<Type> {
-        self.map.insert(name, ty)
-    }
-
-    fn build(self) -> Scope {
-        match self.map.len() {
-            0 => Scope::Null,
-            1 => {
-                let (name, ty) = self.map.into_iter().next().unwrap();
-                Scope::Unit(name, ty)
-            }
-            _ => Scope::Multi(Rc::new(self.map)),
+            Scope::Local(local, ty, id) if *local == name => Some(Symbol {
+                ty: ty.clone(),
+                binding: Binding::Local(*id),
+            }),
+            Scope::Local(_, _, _) => None,
+            Scope::Formals(map) => map.get(&name).map(|(ty, i)| Symbol {
+                ty: ty.clone(),
+                binding: Binding::Formal(*i),
+            }),
+            Scope::Attributes(map) => map.get(&name).map(|attr| Symbol {
+                ty: attr.ty.clone(),
+                binding: Binding::Attribute(attr.order),
+            }),
         }
     }
 }

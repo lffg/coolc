@@ -432,6 +432,7 @@ impl Parser<'_, '_, '_> {
                 let assign = ExprKind::Assignment {
                     target,
                     value: Box::new(value),
+                    info: (),
                 };
                 (assign, span)
             }

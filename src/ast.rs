@@ -45,6 +45,7 @@ use std::fmt::Debug;
 
 use crate::{
     token::Span,
+    type_checker::Symbol,
     types::{builtins, Type},
     util::intern::Interned,
 };
@@ -55,6 +56,8 @@ pub trait Info {
     type Ty: Clone + Default + Debug;
 
     type Expr: Clone + Debug;
+
+    type Assignment: Clone + Debug;
     type Id: Clone + Debug;
 }
 
@@ -65,6 +68,7 @@ pub struct Untyped;
 impl Info for Untyped {
     type Ty = TypeName;
     type Expr = ();
+    type Assignment = ();
     type Id = ();
 }
 
@@ -75,7 +79,8 @@ pub struct Typed;
 impl Info for Typed {
     type Ty = Type;
     type Expr = Type;
-    type Id = ();
+    type Assignment = Symbol;
+    type Id = Symbol;
 }
 
 #[derive(Debug, Default)]
@@ -154,6 +159,7 @@ pub enum ExprKind<I: Info> {
     Assignment {
         target: Ident,
         value: Box<Expr<I>>,
+        info: I::Assignment,
     },
     Dispatch {
         qualifier: Option<DispatchQualifier<I>>,

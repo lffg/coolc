@@ -116,7 +116,11 @@ pub fn print_expr<I: InfoWriter>(
     let info = expr.info.write_resolved(idents); // inferred type, for typed ASTs
     let span = expr.span;
     match &expr.kind {
-        ExprKind::Assignment { target, value } => {
+        ExprKind::Assignment {
+            target,
+            value,
+            info: _,
+        } => {
             writeln!(w, "assignment {} ({span}{info})", idents.get(target))?;
             print_expr(w, idents, i + 1, value)?;
         }
