@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        BinaryOperator, Binding, CaseArm, Class, DispatchQualifier, Expr, ExprKind, Feature,
-        Formal, Ident, Method, Program, TypeName, UnaryOperator, Untyped,
+        Attribute, BinaryOperator, CaseArm, Class, DispatchQualifier, Expr, ExprKind, Feature,
+        Formal, Ident, LetBinding, Method, Program, TypeName, UnaryOperator, Untyped,
     },
     lexer::{self, extract},
     token::{Span, Spanned, Token, TokenKind},
@@ -134,7 +134,7 @@ impl Parser<'_, '_, '_> {
             TokenKind::Colon => {
                 let ty = self.parse_type()?;
                 let initializer = self.parse_initializer()?;
-                Ok(Feature::Attribute(Binding {
+                Ok(Feature::Attribute(Attribute {
                     name,
                     ty,
                     initializer,
@@ -614,16 +614,17 @@ impl Parser<'_, '_, '_> {
         Some(bp)
     }
 
-    fn parse_let_binding(&mut self) -> Result<Binding<Untyped>> {
+    fn parse_let_binding(&mut self) -> Result<LetBinding<Untyped>> {
         let name = self.parse_ident()?;
         self.consume(TokenKind::Colon)?;
         let ty = self.parse_type()?;
         let initializer = self.parse_initializer()?;
 
-        Ok(Binding {
+        Ok(LetBinding {
             name,
             ty,
             initializer,
+            info: (),
         })
     }
 
@@ -640,6 +641,7 @@ impl Parser<'_, '_, '_> {
             name,
             ty,
             body: Box::new(body),
+            info: (),
         };
         Ok((arm, span))
     }
