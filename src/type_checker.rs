@@ -65,28 +65,43 @@ impl Checker<'_> {
 
     fn check_class(&mut self, class: ast::Class<Untyped>) -> ast::Class<Typed> {
         self.current_class = class.name.name();
-        let attributes = Rc::clone(&self.classes[&class.name.name()].attributes);
+        let class_attributes_scope = Rc::clone(&self.classes[&class.name.name()].attributes);
         let current_class = self.get_current_class();
-        let features = self.scoped_attributes(attributes, move |this| {
-            class
-                .features
-                .into_iter()
-                .map(|feature| match feature {
-                    ast::Feature::Attribute(binding) => {
-                        // Add `self` to scope of attribute initializer
-                        this.scoped_formals(current_class.clone(), &[], |this| {
-                            ast::Feature::Attribute(this.check_binding(binding))
-                        })
-                    }
-                    ast::Feature::Method(method) => ast::Feature::Method(this.check_method(method)),
-                })
-                .collect()
-        });
-        ast::Class {
-            name: self.get_type(class.name),
-            inherits: class.inherits,
-            features,
+
+        let mut attributes = Vec::with_capacity(class.features.len());
+        let mut methods = Vec::with_capacity(class.features.len());
+        for feature in class.features {
+            match feature {
+                ast::Feature::Attribute(binding) => attributes.push(binding),
+                ast::Feature::Method(method) => methods.push(method),
+            }
         }
+
+        self.scoped_attributes(class_attributes_scope, move |this| {
+            // First, we check all the attributes. Notice that all attributes use
+            // the same scope.
+            let attributes: Vec<_> = this.scoped_formals(current_class.clone(), &[], |this| {
+                attributes
+                    .into_iter()
+                    .map(|binding| this.check_binding(binding))
+                    .collect()
+            });
+
+            let methods = methods
+                .into_iter()
+                .map(|method| this.check_method(method))
+                .map(ast::Feature::Method);
+
+            ast::Class {
+                name: current_class,
+                inherits: class.inherits,
+                features: attributes
+                    .into_iter()
+                    .map(ast::Feature::Attribute)
+                    .chain(methods)
+                    .collect(),
+            }
+        })
     }
 
     fn check_binding(&mut self, binding: ast::Binding<Untyped>) -> ast::Binding<Typed> {
@@ -1039,8 +1054,13 @@ pub enum Binding {
 }
 
 #[derive(Copy, Clone, Debug)]
-#[expect(dead_code)]
 pub struct LocalId(u32);
+
+impl LocalId {
+    pub fn inner_display(&self) -> impl std::fmt::Display {
+        self.0
+    }
+}
 
 enum Scope {
     Local(Interned<str>, Type, LocalId),
@@ -1701,6 +1721,16 @@ mod tests {
                   attribute d: A (initialized)
                     ident self (174..178 %: A)
             ";
+        }
+
+        fn test_attribute_scope_let_fail() {
+            let program = "
+                class A {
+                    attr1 : Int <- { let x: Int <- 1 in x; };
+                    attr2 : Int <- x;
+                };
+            ";
+            let expected_errors = &["124..125: x is not defined"];
         }
 
         fn test_inherited_attribute_scope_ok() {

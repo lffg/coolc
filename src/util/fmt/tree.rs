@@ -119,9 +119,14 @@ pub fn print_expr<I: InfoWriter>(
         ExprKind::Assignment {
             target,
             value,
-            info: _,
+            info: assignment_info,
         } => {
-            writeln!(w, "assignment {} ({span}{info})", idents.get(target))?;
+            let assignment_info = assignment_info.write_resolved(idents);
+            writeln!(
+                w,
+                "assignment {} ({span}{info}{assignment_info})",
+                idents.get(target)
+            )?;
             print_expr(w, idents, i + 1, value)?;
         }
         ExprKind::Dispatch {
@@ -208,8 +213,9 @@ pub fn print_expr<I: InfoWriter>(
             writeln!(w, "paren ({span}{info})")?;
             print_expr(w, idents, i + 1, inner_expr)?;
         }
-        ExprKind::Id(ident, _) => {
-            writeln!(w, "ident {} ({span}{info})", idents.get(ident))?;
+        ExprKind::Id(ident, id_info) => {
+            let id_info = id_info.write_resolved(idents);
+            writeln!(w, "ident {} ({span}{info}{id_info})", idents.get(ident))?;
         }
         ExprKind::Int(val) => {
             writeln!(w, "int {val} ({span}{info})")?;
@@ -248,13 +254,18 @@ fn sp(w: &mut impl Write, i: usize) -> std::io::Result<()> {
     write!(w, "{:width$}", "", width = i * INDENT_WIDTH)
 }
 
-pub trait InfoWriter: Info<Ty: NameWriter, Expr: NameWriter> {}
+pub trait InfoWriter:
+    Info<Ty: NameWriter, Expr: NameWriter, Id: NameWriter, Assignment: NameWriter>
+{
+}
 
 impl<I> InfoWriter for I
 where
     I: Info,
     I::Ty: NameWriter,
     I::Expr: NameWriter,
+    I::Id: NameWriter,
+    I::Assignment: NameWriter,
 {
 }
 
@@ -294,5 +305,37 @@ impl NameWriter for Type {
         }
 
         TypeWriter(idents.get(self.name()))
+    }
+}
+
+impl NameWriter for crate::type_checker::Symbol {
+    fn write<'i>(&self, _: &'i Interner<str>) -> impl std::fmt::Display + 'i {
+        ""
+    }
+
+    fn write_resolved<'i>(&self, _: &'i Interner<str>) -> impl std::fmt::Display + 'i {
+        ""
+        /*
+        pub struct BindingWriter(crate::type_checker::Binding);
+
+        impl std::fmt::Display for BindingWriter {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self.0 {
+                    crate::type_checker::Binding::Local(id) => {
+                        write!(f, " @local({})", id.inner_display())
+                    }
+                    crate::type_checker::Binding::Formal(i) => {
+                        write!(f, " @formal({i})")
+                    }
+                    crate::type_checker::Binding::Attribute(i) => {
+                        write!(f, " @attr({i})")
+                    }
+                    crate::type_checker::Binding::Undefined => write!(f, " @undef"),
+                }
+            }
+        }
+
+        BindingWriter(self.binding)
+        */
     }
 }
