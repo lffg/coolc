@@ -26,10 +26,25 @@ pub struct Checker<'ident> {
     current_class: Interned<str>,
     errors: Vec<Spanned<Error>>,
     ident_interner: &'ident mut Interner<str>,
+    found_main: bool,
+}
+
+pub mod flags {
+    /// Sane behavior for common user workloads.
+    pub const DEFAULT: u32 = 0;
+
+    /// Disables entry point check. Useful for testing.
+    pub const SKIP_ENTRY_POINT_CHECK: u32 = 1 << 0;
 }
 
 impl Checker<'_> {
-    pub fn with_capacity(ident_interner: &mut Interner<str>, capacity: usize) -> Checker<'_> {
+    pub fn with_capacity(
+        ident_interner: &mut Interner<str>,
+        capacity: usize,
+        checker_flags: u32,
+    ) -> Checker<'_> {
+        let skip_entrypoint_check = (checker_flags & flags::SKIP_ENTRY_POINT_CHECK) == 1;
+
         Checker {
             registry: TypeRegistry::with_capacity(capacity),
             classes: HashMap::with_capacity(0),
@@ -37,6 +52,7 @@ impl Checker<'_> {
             current_class: builtins::NO_TYPE,
             errors: Vec::with_capacity(8),
             ident_interner,
+            found_main: skip_entrypoint_check,
         }
     }
 
@@ -55,6 +71,11 @@ impl Checker<'_> {
             .map(|class| self.check_class(class))
             .collect();
         let program = Program { classes };
+
+        if !self.found_main {
+            let error = Error::MissingEntryPoint;
+            self.errors.push(Span::new_of_length(0, 0).wrap(error));
+        }
 
         if self.errors.is_empty() {
             Ok((program, self.registry))
@@ -119,6 +140,9 @@ impl Checker<'_> {
     }
 
     fn check_method(&mut self, method: ast::Method<Untyped>) -> ast::Method<Typed> {
+        let name = (self.current_class, method.name.name);
+        self.found_main |= name == (well_known::MAIN, well_known::MAIN_METHOD);
+
         let formals: Vec<_> = method
             .formals
             .into_iter()
@@ -810,6 +834,7 @@ impl Checker<'_> {
 
 #[derive(Copy, Clone, Debug)]
 pub enum Error {
+    MissingEntryPoint,
     DuplicateTypeDefinition {
         name: Interned<str>,
         other: Span,
@@ -1108,7 +1133,7 @@ mod tests {
 
     use crate::{
         parser::test_utils::parse_program,
-        type_checker::{Checker, ClassesEnv},
+        type_checker::{flags, Checker, ClassesEnv},
         util::{
             intern::Interner,
             test_utils::{assert_errors, tree_tests},
@@ -1917,7 +1942,7 @@ mod tests {
             class Block inherits Entity {};
             ",
         );
-        let mut checker = Checker::with_capacity(&mut i, 16);
+        let mut checker = Checker::with_capacity(&mut i, 16, flags::SKIP_ENTRY_POINT_CHECK);
         checker.build_type_registry(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
@@ -1947,7 +1972,7 @@ mod tests {
             class Object {};
             ",
         );
-        let mut checker = Checker::with_capacity(&mut i, 16);
+        let mut checker = Checker::with_capacity(&mut i, 16, flags::SKIP_ENTRY_POINT_CHECK);
         checker.build_type_registry(&prog);
         assert_errors(
             checker.ident_interner,
@@ -1966,7 +1991,7 @@ mod tests {
             class Entity inherits UndefinedClass {};
             ",
         );
-        let mut checker = Checker::with_capacity(&mut i, 16);
+        let mut checker = Checker::with_capacity(&mut i, 16, flags::SKIP_ENTRY_POINT_CHECK);
         checker.build_type_registry(&prog);
         assert_errors(
             checker.ident_interner,
@@ -1990,7 +2015,7 @@ mod tests {
             };
             ",
         );
-        let mut checker = Checker::with_capacity(&mut i, 16);
+        let mut checker = Checker::with_capacity(&mut i, 16, flags::SKIP_ENTRY_POINT_CHECK);
         checker.build_type_registry(&prog);
         checker.build_classes_env(&prog);
         assert!(checker.errors.is_empty());
@@ -2049,7 +2074,7 @@ mod tests {
             };
             ",
         );
-        let mut checker = Checker::with_capacity(&mut i, 16);
+        let mut checker = Checker::with_capacity(&mut i, 16, flags::SKIP_ENTRY_POINT_CHECK);
         checker.build_type_registry(&prog);
         checker.build_classes_env(&prog);
         assert!(checker.errors.is_empty());

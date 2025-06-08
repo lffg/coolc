@@ -18,6 +18,10 @@ impl Show for Spanned<type_checker::Error> {
 
         use type_checker::Error::*;
         match error {
+            MissingEntryPoint => write!(
+                f,
+                "program has no entrypoint (`main` method in `Main` class)"
+            ),
             DuplicateTypeDefinition { name, other } => {
                 let name = i.get(name);
                 write!(f, "class {name} already defined at {other}")
