@@ -83,7 +83,7 @@ impl Checker<'_> {
             let attributes: Vec<_> = this.scoped_formals(current_class.clone(), &[], |this| {
                 attributes
                     .into_iter()
-                    .map(|binding| this.check_binding(binding))
+                    .map(|binding| this.check_attribute(binding))
                     .collect()
             });
 
@@ -104,14 +104,14 @@ impl Checker<'_> {
         })
     }
 
-    fn check_binding(&mut self, binding: ast::Binding<Untyped>) -> ast::Binding<Typed> {
+    fn check_attribute(&mut self, binding: ast::Attribute<Untyped>) -> ast::Attribute<Typed> {
         let ty = self.get_type_allowing_self_type(binding.ty);
         let initializer = binding.initializer.map(|expr| {
             let expr = self.check_expr(expr);
             self.assert_is_subtype(expr.ty(), &ty, expr.span);
             expr
         });
-        ast::Binding {
+        ast::Attribute {
             name: binding.name,
             ty,
             initializer,
@@ -314,24 +314,29 @@ impl Checker<'_> {
                     ));
                 }
 
-                let binding = {
-                    assert_eq!(bindings.len(), 1);
-                    let binding = bindings.remove(0); // untyped
-                    let ty = self.get_type_allowing_self_type(binding.ty);
-                    ast::Binding {
-                        name: binding.name,
-                        initializer: binding.initializer.map(|i| {
-                            let expr = self.check_expr(i);
-                            self.assert_is_subtype(expr.ty(), &ty, expr.span);
-                            expr
-                        }),
-                        ty,
-                    }
-                };
-                let body = self.scoped_local(binding.name.name, binding.ty.clone(), |this| {
-                    this.check_expr(*body)
+                assert_eq!(bindings.len(), 1);
+                let binding = bindings.remove(0);
+
+                let binding_name = binding.name;
+                let binding_ty = self.get_type_allowing_self_type(binding.ty);
+                let binding_initializer = binding.initializer.map(|i| {
+                    let expr = self.check_expr(i);
+                    self.assert_is_subtype(expr.ty(), &binding_ty, expr.span);
+                    expr
                 });
-                let bindings = vec![binding];
+
+                let (symbol, body) =
+                    self.scoped_local(binding_name.name, binding_ty.clone(), |this| {
+                        this.check_expr(*body)
+                    });
+
+                let bindings = vec![ast::LetBinding {
+                    name: binding_name,
+                    ty: binding_ty,
+                    initializer: binding_initializer,
+                    info: symbol,
+                }];
+
                 let ty = body.ty().clone();
                 let body = Box::new(body);
                 (ExprKind::Let { bindings, body }, ty)
@@ -350,7 +355,7 @@ impl Checker<'_> {
                         }
                         seen.insert(ty.name());
 
-                        let body = self.scoped_local(arm.name.name, ty.clone(), |this| {
+                        let (symbol, body) = self.scoped_local(arm.name.name, ty.clone(), |this| {
                             this.check_expr(*arm.body)
                         });
 
@@ -360,6 +365,7 @@ impl Checker<'_> {
                             name: arm.name,
                             ty,
                             body: Box::new(body),
+                            info: symbol,
                         }
                     })
                     .collect();
@@ -985,14 +991,20 @@ impl Checker<'_> {
         name: Interned<str>,
         ty: Type,
         f: impl FnOnce(&mut Self) -> T,
-    ) -> T {
+    ) -> (Symbol, T) {
         let id = LocalId(self.symbol_table.locals);
-        self.symbol_table.scopes.push(Scope::Local(name, ty, id));
+        self.symbol_table
+            .scopes
+            .push(Scope::Local(name, ty.clone(), id));
+        let symbol = Symbol {
+            ty,
+            binding: Binding::Local(id),
+        };
         self.symbol_table.locals += 1;
 
         let res = f(self);
         self.symbol_table.scopes.pop().expect("just pushed");
-        res
+        (symbol, res)
     }
 
     fn scoped_formals<T>(

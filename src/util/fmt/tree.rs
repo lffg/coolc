@@ -55,7 +55,7 @@ fn print_feature<I: InfoWriter>(
         Feature::Attribute(binding) => {
             sp(w, i)?;
             write!(w, "attribute ")?;
-            print_binding(w, idents, i, binding)?;
+            print_attribute(w, idents, i, binding)?;
         }
         Feature::Method(Method {
             name,
@@ -84,11 +84,11 @@ fn print_feature<I: InfoWriter>(
     Ok(())
 }
 
-fn print_binding<I: InfoWriter>(
+fn print_attribute<I: InfoWriter>(
     w: &mut impl Write,
     idents: &Interner<str>,
     i: usize,
-    binding: &Binding<I>,
+    binding: &Attribute<I>,
 ) -> std::io::Result<()> {
     write!(
         w,
@@ -180,7 +180,7 @@ pub fn print_expr<I: InfoWriter>(
             for binding in bindings {
                 sp(w, i + 1)?;
                 write!(w, "binding ")?;
-                print_binding(w, idents, i + 1, binding)?;
+                print_let_binding(w, idents, i + 1, binding)?;
             }
             sp(w, i + 1)?;
             writeln!(w, "in")?;
@@ -229,6 +229,28 @@ pub fn print_expr<I: InfoWriter>(
         ExprKind::Dummy => {
             writeln!(w, "dummy ({span}{info})")?;
         }
+    }
+    Ok(())
+}
+
+fn print_let_binding<I: InfoWriter>(
+    w: &mut impl Write,
+    idents: &Interner<str>,
+    i: usize,
+    binding: &LetBinding<I>,
+) -> std::io::Result<()> {
+    write!(
+        w,
+        "{}: {}",
+        idents.get(binding.name),
+        binding.ty.write(idents),
+    )?;
+    if let Some(ref initializer) = binding.initializer {
+        write!(w, " (initialized)")?;
+        writeln!(w)?;
+        print_expr(w, idents, i + 1, initializer)?;
+    } else {
+        writeln!(w)?;
     }
     Ok(())
 }
