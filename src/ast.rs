@@ -41,121 +41,163 @@
 // not
 // <-
 
-use crate::{token::Span, types::builtins, util::intern::Interned};
+use std::fmt::Debug;
+
+use crate::{
+    token::Span,
+    types::{builtins, Type},
+    util::intern::Interned,
+};
+
+/// Info trait which allows one to attach additional information to some of the
+/// AST nodes. Inspired by the "Trees that Grow" paper.
+pub trait Info {
+    type Ty: Clone + Default + Debug;
+
+    type Expr: Clone + Debug;
+    type Id: Clone + Debug;
+}
+
+/// Untyped AST.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct Untyped;
+
+impl Info for Untyped {
+    type Ty = TypeName;
+    type Expr = ();
+    type Id = ();
+}
+
+/// Typed AST.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct Typed;
+
+impl Info for Typed {
+    type Ty = Type;
+    type Expr = Type;
+    type Id = ();
+}
 
 #[derive(Debug, Default)]
-pub struct Program<T = TypeName> {
-    pub classes: Vec<Class<T>>,
+pub struct Program<I: Info> {
+    pub classes: Vec<Class<I>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Class<T = TypeName> {
-    pub name: T,
-    /// Actual inheritance can be accessed through [`TypedClass::name`]'s
-    /// [`Type::parent`], if typed.
+pub struct Class<I: Info> {
+    pub name: I::Ty,
+    /// In typed class, actual inherited parent can be accessed through
+    /// [`Class::name`]'s [`crate::types::Type::parent`] field (if typed).
     ///
     /// This field always preserves the original source declaration.
     pub inherits: Option<TypeName>,
-    pub features: Vec<Feature<T>>,
+    pub features: Vec<Feature<I>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Feature<T = TypeName> {
-    Attribute(Binding<T>),
-    Method(Method<T>),
+pub enum Feature<I: Info> {
+    Attribute(Binding<I>),
+    Method(Method<I>),
 }
 
 #[derive(Debug, Clone)]
-pub struct Binding<T = TypeName> {
+pub struct Binding<I: Info> {
     pub name: Ident,
-    pub ty: T,
-    pub initializer: Option<Expr<T>>,
+    pub ty: I::Ty,
+    pub initializer: Option<Expr<I>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Method<T = TypeName> {
+pub struct Method<I: Info> {
     pub name: Ident,
     /// List of parameters ("formal parameters").
-    pub formals: Vec<Formal<T>>,
-    pub return_ty: T,
-    pub body: Expr<T>,
+    pub formals: Vec<Formal<I>>,
+    pub return_ty: I::Ty,
+    pub body: Expr<I>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Formal<T = TypeName> {
+pub struct Formal<I: Info> {
     pub name: Ident,
-    pub ty: T,
+    pub ty: I::Ty,
 }
 
 #[derive(Debug, Clone)]
-pub struct Expr<T = TypeName> {
-    pub kind: ExprKind<T>,
+pub struct Expr<I: Info> {
+    pub kind: ExprKind<I>,
     pub span: Span,
-    pub ty: T,
+    pub info: I::Expr,
 }
 
-impl<T> Expr<T> {
-    pub fn dummy(span: Span) -> Expr<T>
+impl<I: Info<Expr = Type>> Expr<I> {
+    /// Returns the expression's type.
+    pub fn ty(&self) -> &Type {
+        &self.info
+    }
+}
+
+impl<I: Info> Expr<I> {
+    pub fn dummy(span: Span) -> Expr<I>
     where
-        T: Default,
+        I::Expr: Default,
     {
         Expr {
             kind: ExprKind::Dummy,
             span,
-            ty: T::default(),
+            info: I::Expr::default(),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum ExprKind<T = TypeName> {
+pub enum ExprKind<I: Info> {
     Assignment {
         target: Ident,
-        value: Box<Expr<T>>,
+        value: Box<Expr<I>>,
     },
     Dispatch {
-        qualifier: Option<DispatchQualifier<T>>,
+        qualifier: Option<DispatchQualifier<I>>,
         method: Ident,
-        args: Vec<Expr<T>>,
+        args: Vec<Expr<I>>,
     },
     Conditional {
-        predicate: Box<Expr<T>>,
-        then_arm: Box<Expr<T>>,
-        else_arm: Box<Expr<T>>,
+        predicate: Box<Expr<I>>,
+        then_arm: Box<Expr<I>>,
+        else_arm: Box<Expr<I>>,
     },
     While {
-        predicate: Box<Expr<T>>,
-        body: Box<Expr<T>>,
+        predicate: Box<Expr<I>>,
+        body: Box<Expr<I>>,
     },
     /// AKA: Sequence
     Block {
         /// Non empty list of expressions.
-        body: Vec<Expr<T>>,
+        body: Vec<Expr<I>>,
     },
     Let {
         /// Non empty list of bindings.
-        bindings: Vec<Binding<T>>,
-        body: Box<Expr<T>>,
+        bindings: Vec<Binding<I>>,
+        body: Box<Expr<I>>,
     },
     Case {
-        predicate: Box<Expr<T>>,
+        predicate: Box<Expr<I>>,
         /// Non empty list of arms.
-        arms: Vec<CaseArm<T>>,
+        arms: Vec<CaseArm<I>>,
     },
     New {
-        ty: T,
+        ty: I::Ty,
     },
     Unary {
         op: UnaryOperator,
-        expr: Box<Expr<T>>,
+        expr: Box<Expr<I>>,
     },
     Binary {
         op: BinaryOperator,
-        lhs: Box<Expr<T>>,
-        rhs: Box<Expr<T>>,
+        lhs: Box<Expr<I>>,
+        rhs: Box<Expr<I>>,
     },
-    Paren(Box<Expr<T>>),
-    Id(Ident),
+    Paren(Box<Expr<I>>),
+    Id(Ident, I::Id),
     Int(i64),
     String(Box<str>),
     Bool(bool),
@@ -163,16 +205,16 @@ pub enum ExprKind<T = TypeName> {
 }
 
 #[derive(Debug, Clone)]
-pub struct DispatchQualifier<T = TypeName> {
-    pub expr: Box<Expr<T>>,
-    pub static_qualifier: Option<T>,
+pub struct DispatchQualifier<I: Info> {
+    pub expr: Box<Expr<I>>,
+    pub static_qualifier: Option<I::Ty>,
 }
 
 #[derive(Debug, Clone)]
-pub struct CaseArm<T = TypeName> {
+pub struct CaseArm<I: Info> {
     pub name: Ident,
-    pub ty: T,
-    pub body: Box<Expr<T>>,
+    pub ty: I::Ty,
+    pub body: Box<Expr<I>>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -250,14 +292,14 @@ impl From<&Ident> for Interned<str> {
 pub mod desugar {
     use super::*;
 
-    pub fn multi_binding_let<T>(
-        bindings: Vec<Binding<T>>,
-        mut body: Box<Expr<T>>,
+    pub fn multi_binding_let<I>(
+        bindings: Vec<Binding<I>>,
+        mut body: Box<Expr<I>>,
         span: Span,
-        ty: &T,
-    ) -> Expr<T>
+        info: &I::Expr,
+    ) -> Expr<I>
     where
-        T: Clone,
+        I: Info,
     {
         for binding in bindings.into_iter().rev() {
             body = Box::new(Expr {
@@ -266,7 +308,7 @@ pub mod desugar {
                     body,
                 },
                 span,
-                ty: ty.clone(),
+                info: info.clone(),
             });
         }
         *body
@@ -279,7 +321,7 @@ pub(crate) mod test_utils {
 
     use super::*;
 
-    pub fn from_expr_to_main_program(expr: Expr<TypeName>) -> Program<TypeName> {
+    pub fn from_expr_to_main_program(expr: Expr<Untyped>) -> Program<Untyped> {
         Program {
             classes: vec![Class {
                 name: TypeName::new(well_known::MAIN, builtins::SPAN),
@@ -297,9 +339,10 @@ pub(crate) mod test_utils {
         }
     }
 
-    pub fn from_main_program_to_expr<T>(mut prog: Program<T>) -> Expr<T>
+    pub fn from_main_program_to_expr<I>(mut prog: Program<I>) -> Expr<I>
     where
-        T: Into<Interned<str>>,
+        I: Info,
+        I::Ty: Into<Interned<str>>,
     {
         assert_eq!(prog.classes.len(), 1);
         let mut class = prog.classes.remove(0);

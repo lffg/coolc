@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    ast::{self, BinaryOperator, Expr, ExprKind, Program, TypeName, UnaryOperator},
+    ast::{self, BinaryOperator, Expr, ExprKind, Program, TypeName, Typed, UnaryOperator, Untyped},
     token::{Span, Spanned},
     types::{builtins, well_known, Type, TypeRegistry},
     util::intern::{Interned, Interner},
@@ -42,8 +42,8 @@ impl Checker<'_> {
     #[expect(clippy::type_complexity)]
     pub fn check(
         mut self,
-        program: Program,
-    ) -> Result<(Program<Type>, TypeRegistry), (Program<Type>, TypeRegistry, Vec<Spanned<Error>>)>
+        program: Program<Untyped>,
+    ) -> Result<(Program<Typed>, TypeRegistry), (Program<Typed>, TypeRegistry, Vec<Spanned<Error>>)>
     {
         self.build_type_registry(&program);
         self.build_classes_env(&program);
@@ -62,7 +62,7 @@ impl Checker<'_> {
         }
     }
 
-    fn check_class(&mut self, class: ast::Class) -> ast::Class<Type> {
+    fn check_class(&mut self, class: ast::Class<Untyped>) -> ast::Class<Typed> {
         self.current_class = class.name.name();
         let scope = Rc::clone(&self.classes[&class.name.name()].attributes);
         let scope = Scope::Class(scope);
@@ -90,11 +90,11 @@ impl Checker<'_> {
         }
     }
 
-    fn check_binding(&mut self, binding: ast::Binding) -> ast::Binding<Type> {
+    fn check_binding(&mut self, binding: ast::Binding<Untyped>) -> ast::Binding<Typed> {
         let ty = self.get_type_allowing_self_type(binding.ty);
         let initializer = binding.initializer.map(|expr| {
             let expr = self.check_expr(expr);
-            self.assert_is_subtype(&expr.ty, &ty, expr.span);
+            self.assert_is_subtype(expr.ty(), &ty, expr.span);
             expr
         });
         ast::Binding {
@@ -104,11 +104,11 @@ impl Checker<'_> {
         }
     }
 
-    fn check_method(&mut self, method: ast::Method) -> ast::Method<Type> {
+    fn check_method(&mut self, method: ast::Method<Untyped>) -> ast::Method<Typed> {
         let (formals, scope) = self.get_typed_formals_and_scope(method.formals);
         let body = self.scoped(scope, |this| this.check_expr(method.body));
         let return_ty = self.get_type_allowing_self_type(method.return_ty);
-        self.assert_is_subtype(&body.ty, &return_ty, body.span);
+        self.assert_is_subtype(body.ty(), &return_ty, body.span);
         ast::Method {
             name: method.name,
             formals,
@@ -117,7 +117,7 @@ impl Checker<'_> {
         }
     }
 
-    fn check_expr(&mut self, expr: Expr) -> Expr<Type> {
+    fn check_expr(&mut self, expr: Expr<Untyped>) -> Expr<Typed> {
         let (kind, ty) = match expr.kind {
             ExprKind::Assignment { target, value } => {
                 if target.name == well_known::SELF {
@@ -126,7 +126,7 @@ impl Checker<'_> {
                 }
                 let target_ty = self.lookup_scope(&target);
                 let value = Box::new(self.check_expr(*value));
-                let value_ty = value.ty.clone();
+                let value_ty = value.ty().clone();
                 self.assert_is_subtype(&value_ty, &target_ty, value.span);
                 (ExprKind::Assignment { target, value }, value_ty)
             }
@@ -144,7 +144,7 @@ impl Checker<'_> {
                         static_qualifier: Some(static_qualifier),
                     }) => {
                         let expr = Box::new(self.check_expr(*expr));
-                        let receiver_ty = expr.ty.clone();
+                        let receiver_ty = expr.ty().clone();
                         let static_qualifier_ty = self.get_type(static_qualifier);
                         // In the case of a statically qualified call, we must
                         // also make sure that the receiver type is a subtype of
@@ -165,8 +165,8 @@ impl Checker<'_> {
                     }) => {
                         let expr = Box::new(self.check_expr(*expr));
                         (
-                            expr.ty.clone(),
-                            expr.ty.clone(),
+                            expr.ty().clone(),
+                            expr.ty().clone(),
                             Some(ast::DispatchQualifier {
                                 expr,
                                 static_qualifier: None,
@@ -214,7 +214,7 @@ impl Checker<'_> {
                     .map(|(formal_param, arg)| {
                         let arg = self.check_expr(arg);
                         let formal_ty = self.get_type(formal_param.ty);
-                        self.assert_is_subtype(&arg.ty, &formal_ty, arg.span);
+                        self.assert_is_subtype(arg.ty(), &formal_ty, arg.span);
                         arg
                     })
                     .collect();
@@ -239,11 +239,11 @@ impl Checker<'_> {
                 else_arm,
             } => {
                 let predicate = self.check_expr(*predicate);
-                self.assert_is_type(&predicate.ty, builtins::BOOL, predicate.span);
+                self.assert_is_type(predicate.ty(), builtins::BOOL, predicate.span);
 
                 let then_arm = self.check_expr(*then_arm);
                 let else_arm = self.check_expr(*else_arm);
-                let lub = then_arm.ty.lub(&else_arm.ty);
+                let lub = then_arm.ty().lub(else_arm.ty());
 
                 let kind = ExprKind::Conditional {
                     predicate: Box::new(predicate),
@@ -254,7 +254,7 @@ impl Checker<'_> {
             }
             ExprKind::While { predicate, body } => {
                 let predicate = Box::new(self.check_expr(*predicate));
-                self.assert_is_type(&predicate.ty, builtins::BOOL, predicate.span);
+                self.assert_is_type(predicate.ty(), builtins::BOOL, predicate.span);
 
                 let body = Box::new(self.check_expr(*body));
 
@@ -267,19 +267,19 @@ impl Checker<'_> {
                 let last_ty = body
                     .last()
                     .expect("parser guarantees that sequence is never empty")
-                    .ty
+                    .ty()
                     .clone();
                 (ExprKind::Block { body }, last_ty)
             }
             ExprKind::Let { bindings, body } => {
                 if 1 < bindings.len() {
                     return self.check_expr(ast::desugar::multi_binding_let(
-                        bindings, body, expr.span, &expr.ty,
+                        bindings, body, expr.span, &expr.info,
                     ));
                 }
                 let (bindings, scope) = self.get_typed_bindings_and_scope(bindings);
                 let body = self.scoped(scope, |this| this.check_expr(*body));
-                let ty = body.ty.clone();
+                let ty = body.ty().clone();
                 let body = Box::new(body);
                 (ExprKind::Let { bindings, body }, ty)
             }
@@ -298,7 +298,7 @@ impl Checker<'_> {
                         seen.insert(ty.name());
                         let scope = Scope::Unit(arm.name.name, ty.clone());
                         let body = self.scoped(scope, |this| this.check_expr(*arm.body));
-                        lub = lub.lub(&body.ty);
+                        lub = lub.lub(body.ty());
 
                         ast::CaseArm {
                             name: arm.name,
@@ -316,7 +316,7 @@ impl Checker<'_> {
             ExprKind::Unary { op, expr } => {
                 let unary = |this: &mut Checker, expr: Box<Expr<_>>, expected| {
                     let expr = Box::new(this.check_expr(*expr));
-                    let ty = expr.ty.clone();
+                    let ty = expr.ty().clone();
                     this.assert_is_type(&ty, expected, expr.span);
                     (ExprKind::Unary { op, expr }, ty)
                 };
@@ -336,8 +336,8 @@ impl Checker<'_> {
                     |this: &mut Checker, expected, lhs: Box<Expr<_>>, rhs: Box<Expr<_>>, ret| {
                         let lhs = Box::new(this.check_expr(*lhs));
                         let rhs = Box::new(this.check_expr(*rhs));
-                        this.assert_is_type(&lhs.ty, expected, lhs.span);
-                        this.assert_is_type(&rhs.ty, expected, rhs.span);
+                        this.assert_is_type(lhs.ty(), expected, lhs.span);
+                        this.assert_is_type(rhs.ty(), expected, rhs.span);
                         (ExprKind::Binary { op, lhs, rhs }, this.must_get_type(ret))
                     };
 
@@ -355,8 +355,8 @@ impl Checker<'_> {
                     BinaryOperator::Eq => {
                         let lhs = Box::new(self.check_expr(*lhs));
                         let rhs = Box::new(self.check_expr(*rhs));
-                        if lhs.ty.is_primitive() || rhs.ty.is_primitive() {
-                            self.assert_is_type(&rhs.ty, lhs.ty.name(), rhs.span);
+                        if lhs.ty().is_primitive() || rhs.ty().is_primitive() {
+                            self.assert_is_type(rhs.ty(), lhs.ty().name(), rhs.span);
                         }
                         let ret = self.must_get_type(builtins::BOOL);
                         (ExprKind::Binary { op, lhs, rhs }, ret)
@@ -365,12 +365,13 @@ impl Checker<'_> {
             }
             ExprKind::Paren(expr) => {
                 let expr = Box::new(self.check_expr(*expr));
-                let ty = expr.ty.clone();
+                let ty = expr.ty().clone();
                 (ExprKind::Paren(expr), ty)
             }
-            ExprKind::Id(ident) => {
+            ExprKind::Id(ident, ()) => {
                 let ty = self.lookup_scope(&ident);
-                (ExprKind::Id(ident), ty)
+                // TODO: Add symbol here.
+                (ExprKind::Id(ident, ()), ty)
             }
             ExprKind::Int(int) => (ExprKind::Int(int), self.must_get_type(builtins::INT)),
             ExprKind::String(string) => (
@@ -382,12 +383,12 @@ impl Checker<'_> {
         };
         Expr {
             kind,
-            ty,
             span: expr.span,
+            info: ty,
         }
     }
 
-    fn build_classes_env(&mut self, program: &Program) {
+    fn build_classes_env(&mut self, program: &Program<Untyped>) {
         let classes: BTreeMap<_, _> = {
             // We first create the environment with the builtins.
             // For now, they don't have any methods.
@@ -418,7 +419,7 @@ impl Checker<'_> {
     /// Define the methods map for a single class and all of its parents.
     fn define_class_env(
         &mut self,
-        classes: &BTreeMap<Interned<str>, Cow<'_, ast::Class>>,
+        classes: &BTreeMap<Interned<str>, Cow<'_, ast::Class<Untyped>>>,
         class_ty: &Type,
         seen_attributes: &mut HashMap<Interned<str>, Span>,
         seen_methods: &mut HashMap<Interned<str>, Span>,
@@ -513,7 +514,7 @@ impl Checker<'_> {
 
     /// Scans through the program's source and records all classes in the
     /// `registry` field.
-    fn build_type_registry(&mut self, program: &Program) {
+    fn build_type_registry(&mut self, program: &Program<Untyped>) {
         const OBJECT: TypeName = TypeName::new(builtins::OBJECT, builtins::SPAN);
 
         // Maps a class name to its definition span and parent class, if any.
@@ -769,8 +770,8 @@ impl Checker<'_> {
 
     fn get_typed_formals_and_scope(
         &mut self,
-        formals: Vec<ast::Formal>,
-    ) -> (Vec<ast::Formal<Type>>, Scope) {
+        formals: Vec<ast::Formal<Untyped>>,
+    ) -> (Vec<ast::Formal<Typed>>, Scope) {
         let mut scope = Scope::with_capacity(formals.len());
         let formals = formals
             .into_iter()
@@ -789,8 +790,8 @@ impl Checker<'_> {
     /// NOTE: Resolves bindings' types allowing for `SELF_TYPE`!
     fn get_typed_bindings_and_scope(
         &mut self,
-        bindings: Vec<ast::Binding>,
-    ) -> (Vec<ast::Binding<Type>>, Scope) {
+        bindings: Vec<ast::Binding<Untyped>>,
+    ) -> (Vec<ast::Binding<Typed>>, Scope) {
         let mut scope = Scope::with_capacity(bindings.len());
         let bindings = bindings
             .into_iter()
@@ -801,7 +802,7 @@ impl Checker<'_> {
                     name: binding.name,
                     initializer: binding.initializer.map(|i| {
                         let expr = self.check_expr(i);
-                        self.assert_is_subtype(&expr.ty, &ty, expr.span);
+                        self.assert_is_subtype(expr.ty(), &ty, expr.span);
                         expr
                     }),
                     ty,
@@ -901,11 +902,11 @@ pub struct ClassAttribute {
     pub order: u32,
 }
 
-/// A method signature. Notice that formal parameters and the return use the
-/// nominal [`TypeName`] since when dispatching method, one needs to
-/// differentiate between an unresolved (nominal) `SELF_TYPE` and other types.
+/// A method signature. Notice that formal parameters are [`Untyped`] since we
+/// need the unresolved ("nominal") type for the return type in order to handle
+/// `SELF_TYPE` when dispatching the method.
 pub struct ClassMethodSignature {
-    pub formals: Vec<ast::Formal<TypeName>>,
+    pub formals: Vec<ast::Formal<Untyped>>,
     pub return_ty: TypeName,
     pub order: u32,
 }

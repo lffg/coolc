@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         BinaryOperator, Binding, CaseArm, Class, DispatchQualifier, Expr, ExprKind, Feature,
-        Formal, Ident, Method, Program, TypeName, UnaryOperator,
+        Formal, Ident, Method, Program, TypeName, UnaryOperator, Untyped,
     },
     lexer::{self, extract},
     token::{Span, Spanned, Token, TokenKind},
@@ -17,7 +17,7 @@ pub fn parse_program(
     src: &str,
     tokens: &mut Vec<Token>,
     ident_interner: &mut Interner<str>,
-) -> ParseResult<Program> {
+) -> ParseResult<Program<Untyped>> {
     parse(
         src,
         tokens,
@@ -31,7 +31,7 @@ pub fn parse_expr(
     src: &str,
     tokens: &mut Vec<Token>,
     ident_interner: &mut Interner<str>,
-) -> ParseResult<Expr> {
+) -> ParseResult<Expr<Untyped>> {
     let default = || Expr::dummy(Span::new_of_length(u32::try_from(src.len()).unwrap(), 0));
     parse(src, tokens, ident_interner, Parser::parse_expr, default)
 }
@@ -82,7 +82,7 @@ struct Parser<'src, 'tok, 'ident> {
 }
 
 impl Parser<'_, '_, '_> {
-    fn parse_program(&mut self) -> Result<Program> {
+    fn parse_program(&mut self) -> Result<Program<Untyped>> {
         let mut classes = Vec::with_capacity(4);
         while self.except([]) {
             if let Ok(parsed) = self.synchronize(&[], &[TokenKind::Class], Parser::parse_class) {
@@ -99,7 +99,7 @@ impl Parser<'_, '_, '_> {
         }
     }
 
-    fn parse_class(&mut self) -> Result<Class> {
+    fn parse_class(&mut self) -> Result<Class<Untyped>> {
         self.consume(TokenKind::Class)?;
         let name = self.parse_type()?;
 
@@ -124,7 +124,7 @@ impl Parser<'_, '_, '_> {
         })
     }
 
-    fn parse_feature(&mut self) -> Result<Feature> {
+    fn parse_feature(&mut self) -> Result<Feature<Untyped>> {
         let name = self.parse_ident()?;
 
         match self
@@ -161,14 +161,14 @@ impl Parser<'_, '_, '_> {
         }
     }
 
-    fn parse_formal(&mut self) -> Result<Formal> {
+    fn parse_formal(&mut self) -> Result<Formal<Untyped>> {
         let name = self.parse_ident()?;
         self.consume(TokenKind::Colon)?;
         let ty = self.parse_type()?;
         Ok(Formal { name, ty })
     }
 
-    fn parse_initializer(&mut self) -> Result<Option<Expr>> {
+    fn parse_initializer(&mut self) -> Result<Option<Expr<Untyped>>> {
         if !self.take(TokenKind::Assign) {
             return Ok(None);
         }
@@ -188,11 +188,11 @@ impl Parser<'_, '_, '_> {
         })
     }
 
-    fn parse_expr(&mut self) -> Result<Expr> {
+    fn parse_expr(&mut self) -> Result<Expr<Untyped>> {
         self.parse_expr_bp(0)
     }
 
-    fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr> {
+    fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr<Untyped>> {
         let lhs_token = self.advance();
         let mut lhs = self.parse_nud(lhs_token)?;
 
@@ -218,15 +218,15 @@ impl Parser<'_, '_, '_> {
 
     /// nud: Parses tokens that start an expression
     /// (prefix operators, literals, grouping)
-    fn parse_nud(&mut self, token: Token) -> Result<Expr> {
+    fn parse_nud(&mut self, token: Token) -> Result<Expr<Untyped>> {
         let (kind, span) = match token.kind {
-            TokenKind::Identifier => (
-                ExprKind::Id(Ident {
+            TokenKind::Identifier => {
+                let ident = Ident {
                     name: self.ident_interner.intern(extract::ident(token, self.src)),
                     span: token.span(),
-                }),
-                token.span(),
-            ),
+                };
+                (ExprKind::Id(ident, ()), token.span())
+            }
             TokenKind::Number => {
                 let Ok(parsed) = extract::int(token, self.src) else {
                     self.error(token.span().wrap(Error::ParseInt));
@@ -380,13 +380,13 @@ impl Parser<'_, '_, '_> {
         Ok(Expr {
             kind,
             span,
-            ty: TypeName::default(),
+            info: (),
         })
     }
 
     /// led: Parses tokens that follow a left-hand-side expression
     /// (infix/postfix operators)
-    fn parse_led(&mut self, op_token: Token, lhs: Expr, rbp: u8) -> Result<Expr> {
+    fn parse_led(&mut self, op_token: Token, lhs: Expr<Untyped>, rbp: u8) -> Result<Expr<Untyped>> {
         let (kind, span) = match op_token.kind {
             // Binary Operators: +, -, *, /, <, <=, =
             kind @ (TokenKind::Plus
@@ -421,7 +421,7 @@ impl Parser<'_, '_, '_> {
             // Assignment: ID <- expr
             TokenKind::Assign => {
                 // Check if lhs is a simple identifier
-                let ExprKind::Id(target) = lhs.kind else {
+                let ExprKind::Id(target, ()) = lhs.kind else {
                     let error = Error::InvalidAssignmentTarget;
                     self.error(lhs.span.wrap(error));
                     return Err(());
@@ -488,7 +488,7 @@ impl Parser<'_, '_, '_> {
             // Self Dispatch Call: ID ( [expr [, expr]*] ) (parsed as led for '(')
             TokenKind::LParen => {
                 // Ensure the lhs was just a simple ID parsed by nud
-                let ExprKind::Id(method) = lhs.kind else {
+                let ExprKind::Id(method, ()) = lhs.kind else {
                     self.error(lhs.span.wrap(Error::InvalidDispatch));
                     return Err(());
                 };
@@ -517,7 +517,7 @@ impl Parser<'_, '_, '_> {
         Ok(Expr {
             kind,
             span,
-            ty: TypeName::default(),
+            info: (),
         })
     }
 
@@ -613,7 +613,7 @@ impl Parser<'_, '_, '_> {
         Some(bp)
     }
 
-    fn parse_let_binding(&mut self) -> Result<Binding> {
+    fn parse_let_binding(&mut self) -> Result<Binding<Untyped>> {
         let name = self.parse_ident()?;
         self.consume(TokenKind::Colon)?;
         let ty = self.parse_type()?;
@@ -626,7 +626,7 @@ impl Parser<'_, '_, '_> {
         })
     }
 
-    fn parse_case_arm(&mut self) -> Result<(CaseArm, Span)> {
+    fn parse_case_arm(&mut self) -> Result<(CaseArm<Untyped>, Span)> {
         let name = self.parse_ident()?;
         let start_span = name.span;
         self.consume(TokenKind::Colon)?;
@@ -827,7 +827,7 @@ impl From<std::num::ParseIntError> for Error {
 pub(crate) mod test_utils {
     use super::*;
 
-    pub fn parse_program(src: &str) -> (Interner<str>, Program) {
+    pub fn parse_program(src: &str) -> (Interner<str>, Program<Untyped>) {
         let mut i = Interner::with_capacity(32);
         let prog = super::parse_program(src, &mut Vec::with_capacity(512), &mut i)
             .expect("failed to parse");
@@ -835,7 +835,7 @@ pub(crate) mod test_utils {
     }
 
     #[expect(dead_code)]
-    pub fn parse_expr(src: &str) -> (Interner<str>, Expr) {
+    pub fn parse_expr(src: &str) -> (Interner<str>, Expr<Untyped>) {
         let mut i = Interner::with_capacity(32);
         let prog =
             super::parse_expr(src, &mut Vec::with_capacity(512), &mut i).expect("failed to parse");

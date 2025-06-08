@@ -193,7 +193,7 @@ struct TypeInner {
 /// See also [`well_known`].
 pub mod builtins {
     use crate::{
-        ast::{self, Ident, TypeName},
+        ast::{self, Ident, TypeName, Untyped},
         token::Span,
         util::intern::{Interned, Interner},
     };
@@ -236,7 +236,7 @@ pub mod builtins {
     }
 
     impl BuiltInClass {
-        pub fn build_ast(&self, i: &mut Interner<str>) -> ast::Class<TypeName> {
+        pub fn build_ast(&self, i: &mut Interner<str>) -> ast::Class<Untyped> {
             fn ident(i: &mut Interner<str>, s: &str) -> Ident {
                 let name = i.intern(s);
                 Ident { name, span: SPAN }
@@ -267,7 +267,7 @@ pub mod builtins {
                             body: ast::Expr {
                                 kind: ast::ExprKind::Dummy,
                                 span: SPAN,
-                                ty: TypeName::default(),
+                                info: (),
                             },
                         })
                     })
