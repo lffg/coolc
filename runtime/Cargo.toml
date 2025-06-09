@@ -1,0 +1,12 @@
+[package]
+name = "runtime"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+
+[lints]
+workspace = true

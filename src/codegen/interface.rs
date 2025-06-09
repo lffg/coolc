@@ -20,18 +20,25 @@ pub fn generate<W>(
     match target {
         Target::x86_64_darwin => DarwinGenerator::new(writer, ident_interner).generate(program),
         Target::x86_64_linux => LinuxGenerator::new(writer, ident_interner).generate(program),
-        Target::none => unreachable!("must be handled during args validation"),
     }
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
-#[clap(rename_all = "snake_case")]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Target {
     x86_64_darwin,
     x86_64_linux,
-    #[clap(skip)]
-    none,
+}
+
+impl Target {
+    pub const ALL: &[Target] = &[Target::x86_64_darwin, Target::x86_64_linux];
+
+    pub const fn triple(&self) -> &'static str {
+        match self {
+            Target::x86_64_darwin => "x86_64-apple-darwin",
+            Target::x86_64_linux => "x86_64-unknown-linux-gnu",
+        }
+    }
 }
 
 impl std::fmt::Display for Target {
@@ -39,17 +46,6 @@ impl std::fmt::Display for Target {
         match self {
             Target::x86_64_darwin => f.write_str("x86_64_darwin"),
             Target::x86_64_linux => f.write_str("x86_64_linux"),
-            Target::none => f.write_str("none"),
         }
-    }
-}
-
-cfg_if::cfg_if! {
-    if #[cfg(all(target_arch = "x86_64", target_os = "macos"))] {
-        pub const DEFAULT_TARGET: Target = Target::x86_64_darwin;
-    } else if #[cfg(all(target_arch = "x86_64", target_os = "linux"))] {
-        pub const DEFAULT_TARGET: Target = Target::x86_64_linux;
-    } else {
-        pub const DEFAULT_TARGET: Target = Target::none;
     }
 }

@@ -9,8 +9,7 @@ use std::{
 
 use clap::Parser;
 use cool::{
-    codegen::{self, Target},
-    parser,
+    codegen, parser,
     token::{Spanned, Token},
     type_checker,
     util::{
@@ -19,6 +18,10 @@ use cool::{
         intern::Interner,
     },
 };
+
+use crate::target::{Target, DEFAULT_TARGET};
+
+mod target;
 
 #[derive(Parser)]
 struct Args {
@@ -35,8 +38,8 @@ struct Args {
     assembly: bool,
 
     /// Compilation target.
-    #[arg(short, long, default_value_t = codegen::DEFAULT_TARGET)]
-    target: codegen::Target,
+    #[arg(short, long, default_value_t = DEFAULT_TARGET)]
+    target: Target,
 
     /// Binary output.
     #[arg(short, long)]
@@ -56,7 +59,7 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    if args.target == Target::none {
+    if args.target == Target::None {
         eprintln!(
             "Couldn't infer compilation target. Check `--help` for available target options."
         );
@@ -169,17 +172,28 @@ fn pipeline(src: &str, args: &Args, tokens: &mut Vec<Token>, ident_interner: &mu
             exit(1);
         }
         println!("=== Assembly ===");
-        codegen::generate(io::stdout(), ident_interner, args.target, &typed_prog);
+        codegen::generate(
+            io::stdout(),
+            ident_interner,
+            args.target.into(),
+            &typed_prog,
+        );
     }
 
     let Some(out_file) = &args.output else {
         return;
     };
+    let target = args.target;
 
     // Create assembly file
     std::fs::create_dir_all("target/_coolc").unwrap();
     let mut out_assembly = BufWriter::new(File::create("target/_coolc/out.s").unwrap());
-    codegen::generate(&mut out_assembly, ident_interner, args.target, &typed_prog);
+    codegen::generate(
+        &mut out_assembly,
+        ident_interner,
+        args.target.into(),
+        &typed_prog,
+    );
     out_assembly.flush().unwrap();
 
     // Assemble
@@ -199,6 +213,11 @@ fn pipeline(src: &str, args: &Args, tokens: &mut Vec<Token>, ident_interner: &mu
         exit(1);
     }
 
+    // Create runtime archive file
+    let runtime_file = &format!("target/_coolc/libruntime-{target}.a");
+    std::fs::write(runtime_file, target.get_runtime_bytes())
+        .expect("Failed to create runtime file");
+
     // Link
     eprintln!("linking");
     let cc = env::var("CC");
@@ -207,6 +226,7 @@ fn pipeline(src: &str, args: &Args, tokens: &mut Vec<Token>, ident_interner: &mu
         .arg("-o")
         .arg(out_file)
         .arg("target/_coolc/out.o")
+        .arg(runtime_file)
         .output()
         .unwrap_or_else(|error| {
             eprintln!("failed to link program with `{cc}`: {error}");

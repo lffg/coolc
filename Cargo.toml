@@ -1,5 +1,6 @@
 [workspace]
-members = [".", "bench"]
+members = [".", "coolc-bin", "runtime", "bench"]
+default-members = [".", "coolc-bin"]
 resolver = "3"
 
 [workspace.package]
@@ -31,15 +32,8 @@ result_unit_err = { level = "allow", priority = 2 }
 name = "cool"
 version.workspace = true
 edition.workspace = true
-default-run = "coolc"
-
-[[bin]]
-name = "coolc"
-path = "./src/bin/main.rs"
 
 [dependencies]
-cfg-if.workspace = true
-clap.workspace = true
 phf.workspace = true
 
 [dev-dependencies]

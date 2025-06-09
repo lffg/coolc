@@ -11,7 +11,7 @@ pub mod type_checker;
 /// The code generator takes a typed AST and generates target machine code.
 pub mod codegen {
     mod interface;
-    pub use interface::{generate, Target, DEFAULT_TARGET};
+    pub use interface::{generate, Target};
 
     mod x86_64;
     mod x86_64_env;
