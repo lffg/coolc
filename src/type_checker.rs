@@ -140,9 +140,6 @@ impl Checker<'_> {
     }
 
     fn check_method(&mut self, method: ast::Method<Untyped>) -> ast::Method<Typed> {
-        let name = (self.current_class, method.name.name);
-        self.found_main |= name == (well_known::MAIN, well_known::MAIN_METHOD);
-
         let formals: Vec<_> = method
             .formals
             .into_iter()
@@ -160,6 +157,13 @@ impl Checker<'_> {
         });
         let return_ty = self.get_type_allowing_self_type(method.return_ty);
         self.assert_is_subtype(body.ty(), &return_ty, body.span);
+
+        let name = (self.current_class, method.name.name);
+        if name == (well_known::MAIN, well_known::MAIN_METHOD) {
+            self.found_main = true;
+            self.assert_is_type(&return_ty, builtins::INT, return_ty.span());
+        }
+
         ast::Method {
             name: method.name,
             formals,
