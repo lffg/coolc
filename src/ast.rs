@@ -59,6 +59,8 @@ pub trait Info {
 
     type Assignment: Clone + Debug;
     type Id: Clone + Debug;
+    type LetBinding: Clone + Debug;
+    type CaseArm: Clone + Debug;
 }
 
 /// Untyped AST.
@@ -70,6 +72,8 @@ impl Info for Untyped {
     type Expr = ();
     type Assignment = ();
     type Id = ();
+    type LetBinding = ();
+    type CaseArm = ();
 }
 
 /// Typed AST.
@@ -81,6 +85,8 @@ impl Info for Typed {
     type Expr = Type;
     type Assignment = Symbol;
     type Id = Symbol;
+    type LetBinding = Symbol;
+    type CaseArm = Symbol;
 }
 
 #[derive(Debug, Default)]
@@ -101,12 +107,12 @@ pub struct Class<I: Info> {
 
 #[derive(Debug, Clone)]
 pub enum Feature<I: Info> {
-    Attribute(Binding<I>),
+    Attribute(Attribute<I>),
     Method(Method<I>),
 }
 
 #[derive(Debug, Clone)]
-pub struct Binding<I: Info> {
+pub struct Attribute<I: Info> {
     pub name: Ident,
     pub ty: I::Ty,
     pub initializer: Option<Expr<I>>,
@@ -182,7 +188,7 @@ pub enum ExprKind<I: Info> {
     },
     Let {
         /// Non empty list of bindings.
-        bindings: Vec<Binding<I>>,
+        bindings: Vec<LetBinding<I>>,
         body: Box<Expr<I>>,
     },
     Case {
@@ -211,6 +217,14 @@ pub enum ExprKind<I: Info> {
 }
 
 #[derive(Debug, Clone)]
+pub struct LetBinding<I: Info> {
+    pub name: Ident,
+    pub ty: I::Ty,
+    pub initializer: Option<Expr<I>>,
+    pub info: I::LetBinding,
+}
+
+#[derive(Debug, Clone)]
 pub struct DispatchQualifier<I: Info> {
     pub expr: Box<Expr<I>>,
     pub static_qualifier: Option<I::Ty>,
@@ -221,6 +235,7 @@ pub struct CaseArm<I: Info> {
     pub name: Ident,
     pub ty: I::Ty,
     pub body: Box<Expr<I>>,
+    pub info: I::CaseArm,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -299,7 +314,7 @@ pub mod desugar {
     use super::*;
 
     pub fn multi_binding_let<I>(
-        bindings: Vec<Binding<I>>,
+        bindings: Vec<LetBinding<I>>,
         mut body: Box<Expr<I>>,
         span: Span,
         info: &I::Expr,

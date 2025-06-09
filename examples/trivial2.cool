@@ -1,0 +1,9 @@
+class Main {
+    main() : Int {
+        let io : IO <- new IO in
+        {
+            io.out_int(5);
+            0;
+        }
+    };
+};
