@@ -226,9 +226,6 @@ pub mod builtins {
             in_string(): String;
             in_int(): Int;
 
-            string_of_int(i: Int) : String;
-            string_of_bool(b: Bool) : String;
-
             exit(status: Int) : "<no-type>";
         };
     }

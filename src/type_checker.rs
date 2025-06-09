@@ -159,7 +159,13 @@ impl Checker<'_> {
         self.assert_is_subtype(body.ty(), &return_ty, body.span);
 
         let name = (self.current_class, method.name.name);
-        if name == (well_known::MAIN, well_known::MAIN_METHOD) {
+        // Usually, checks such as `and !self.found_main` aren't necessary.
+        // However, the type checker's caller may define a flag to disable the
+        // main check. In this case, we set `found_main` as true in the
+        // constructor. Hence, this check is necessary to avoid running the
+        // return type in the check if the main was found *or* if it was
+        // bypassed by such a flag.
+        if name == (well_known::MAIN, well_known::MAIN_METHOD) && !self.found_main {
             self.found_main = true;
             self.assert_is_type(&return_ty, builtins::INT, return_ty.span());
         }
