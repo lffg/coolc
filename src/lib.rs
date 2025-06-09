@@ -8,6 +8,15 @@ pub mod parser;
 /// and maps it into a typed AST.
 pub mod type_checker;
 
+/// The code generator takes a typed AST and generates target machine code.
+pub mod codegen {
+    mod interface;
+    pub use interface::{generate, Target, DEFAULT_TARGET};
+
+    mod x86_64;
+    mod x86_64_env;
+}
+
 pub mod ast;
 pub mod token;
 pub mod types;

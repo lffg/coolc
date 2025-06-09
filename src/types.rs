@@ -222,8 +222,13 @@ pub mod builtins {
         class IO("IO", 6) inherits OBJECT {
             out_string(x: String) : SELF_TYPE;
             out_int(x: Int) : SELF_TYPE;
+
             in_string(): String;
             in_int(): Int;
+
+            string_of_int(i: Int) : String;
+            string_of_bool(b: Bool) : String;
+
             exit(status: Int) : "<no-type>";
         };
     }

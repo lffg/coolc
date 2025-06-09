@@ -1,11 +1,15 @@
 use std::{
     env,
     error::Error,
-    fs,
-    io::{self, Write},
+    fs::{self, File},
+    io::{self, BufWriter, Write},
+    path::PathBuf,
+    process::exit,
 };
 
+use clap::Parser;
 use cool::{
+    codegen::{self, Target},
     parser,
     token::{Spanned, Token},
     type_checker,
@@ -16,6 +20,32 @@ use cool::{
     },
 };
 
+#[derive(Parser)]
+struct Args {
+    /// Emits the untyped AST.
+    #[arg(short, long)]
+    untyped_ast: bool,
+
+    /// Emits the typed AST.
+    #[arg(long)]
+    typed_ast: bool,
+
+    /// Emits the un-assembled machine code.
+    #[arg(long)]
+    assembly: bool,
+
+    /// Compilation target.
+    #[arg(short, long, default_value_t = codegen::DEFAULT_TARGET)]
+    target: codegen::Target,
+
+    /// Binary output.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+
+    /// Program input, Cool source code.
+    input: Option<PathBuf>,
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("Error: {error}");
@@ -24,14 +54,22 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let mut args = env::args().skip(1);
+    let args = Args::parse();
+
+    if args.target == Target::none {
+        eprintln!(
+            "Couldn't infer compilation target. Check `--help` for available target options."
+        );
+        exit(1);
+    }
+
     let mut tokens_buf = Vec::with_capacity(8 * 1024);
     let mut ident_interner = Interner::with_capacity(1024);
 
     // File mode
-    if let Some(prog_path) = args.next() {
+    if let Some(prog_path) = &args.input {
         let input = fs::read_to_string(prog_path)?;
-        pipeline(&input, &mut tokens_buf, &mut ident_interner);
+        pipeline(&input, &args, &mut tokens_buf, &mut ident_interner);
         return Ok(());
     }
 
@@ -57,7 +95,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             if accumulated_input.trim().is_empty() {
                 println!("^D");
             } else {
-                pipeline(&accumulated_input, &mut tokens_buf, &mut ident_interner);
+                pipeline(
+                    &accumulated_input,
+                    &args,
+                    &mut tokens_buf,
+                    &mut ident_interner,
+                );
             }
             return Ok(());
         }
@@ -65,7 +108,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         // Empty line is another termination signal
         if current_line.trim().is_empty() {
             if !accumulated_input.trim().is_empty() {
-                pipeline(&accumulated_input, &mut tokens_buf, &mut ident_interner);
+                pipeline(
+                    &accumulated_input,
+                    &args,
+                    &mut tokens_buf,
+                    &mut ident_interner,
+                );
                 accumulated_input.clear(); // Clear for next input
             }
         } else {
@@ -74,7 +122,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<str>) {
+fn pipeline(src: &str, args: &Args, tokens: &mut Vec<Token>, ident_interner: &mut Interner<str>) {
     tokens.clear();
 
     let prog = match parser::parse_program(src, tokens, ident_interner) {
@@ -92,8 +140,10 @@ fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<st
         }
     };
 
-    println!("=== Untyped AST ===");
-    print_program(&mut io::stdout(), ident_interner, &prog).unwrap();
+    if args.untyped_ast {
+        println!("=== Untyped AST ===");
+        print_program(&mut io::stdout(), ident_interner, &prog).unwrap();
+    }
 
     let checker =
         type_checker::Checker::with_capacity(ident_interner, 512, type_checker::flags::DEFAULT);
@@ -108,9 +158,57 @@ fn pipeline(src: &str, tokens: &mut Vec<Token>, ident_interner: &mut Interner<st
         }
     };
 
-    println!();
-    println!("=== Typed AST ===");
-    print_program(&mut io::stdout(), ident_interner, &typed_prog).unwrap();
+    if args.typed_ast {
+        println!("=== Typed AST ===");
+        print_program(&mut io::stdout(), ident_interner, &typed_prog).unwrap();
+    }
+
+    if args.assembly {
+        if args.output.is_some() {
+            eprintln!("`output` flag can't be used with `--assembly` in this version. Try again.");
+            exit(1);
+        }
+        println!("=== Assembly ===");
+        codegen::generate(io::stdout(), ident_interner, args.target, &typed_prog);
+    }
+
+    let Some(out_file) = &args.output else {
+        return;
+    };
+
+    // Create assembly file
+    std::fs::create_dir_all("target/_coolc").unwrap();
+    let mut out_assembly = BufWriter::new(File::create("target/_coolc/out.s").unwrap());
+    codegen::generate(&mut out_assembly, ident_interner, args.target, &typed_prog);
+    out_assembly.flush().unwrap();
+
+    // Assemble
+    println!("assembling");
+    let as_out = std::process::Command::new("as")
+        .arg("-o")
+        .arg("target/_coolc/out.o")
+        .arg("target/_coolc/out.s")
+        .output()
+        .expect("failed to assemble program");
+    assert!(
+        as_out.status.success(),
+        "failed to assemble program: non-zero status"
+    );
+
+    // Link
+    println!("linking");
+    let cc = env::var("CC");
+    let cc = cc.as_deref().unwrap_or("clang");
+    let link_out = std::process::Command::new(cc)
+        .arg("-o")
+        .arg(out_file)
+        .arg("target/_coolc/out.o")
+        .output()
+        .expect("failed to link program");
+    assert!(
+        link_out.status.success(),
+        "failed to link program: non-exit status"
+    );
 }
 
 fn report_error<T>(src: &str, error: &Spanned<T>, ident_interner: &Interner<str>)
