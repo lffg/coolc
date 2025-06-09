@@ -194,7 +194,7 @@ impl Lexer<'_, '_> {
             match self.advance() {
                 ')' => break, // finished closing comment
                 '\0' => return TokenKind::ErrorUnclosedComment,
-                _ => continue, // sadly couldn't close it! keep scanning...
+                _ => (), // sadly couldn't close it! keep scanning...
             }
         }
         TokenKind::MultilineComment

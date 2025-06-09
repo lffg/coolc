@@ -19,7 +19,7 @@ impl std::fmt::Display for Target {
 }
 
 impl Target {
-    pub const fn get_runtime_bytes(&self) -> &'static [u8] {
+    pub const fn get_runtime_bytes(self) -> &'static [u8] {
         match self {
             Target::x86_64_darwin => include_bytes!(env!("COOL_RT_x86_64_darwin")),
             Target::x86_64_linux => include_bytes!(env!("COOL_RT_x86_64_linux")),

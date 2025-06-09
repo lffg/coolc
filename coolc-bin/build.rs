@@ -13,7 +13,7 @@ fn compile_target(target: Target) {
         .to_str()
         .unwrap();
 
-    let target_dir = format!("{root}/target/_coolc/runtime/rt-{}", target);
+    let target_dir = format!("{root}/target/_coolc/runtime/rt-{target}");
 
     let out = Command::new(cargo)
         .arg("build")
