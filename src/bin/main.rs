@@ -183,20 +183,24 @@ fn pipeline(src: &str, args: &Args, tokens: &mut Vec<Token>, ident_interner: &mu
     out_assembly.flush().unwrap();
 
     // Assemble
-    println!("assembling");
+    eprintln!("assembling");
     let as_out = std::process::Command::new("as")
         .arg("-o")
         .arg("target/_coolc/out.o")
         .arg("target/_coolc/out.s")
         .output()
-        .expect("failed to assemble program");
-    assert!(
-        as_out.status.success(),
-        "failed to assemble program: non-zero status"
-    );
+        .unwrap_or_else(|error| {
+            eprintln!("failed to assemble program with `as`: {error}");
+            exit(1);
+        });
+    if !as_out.status.success() {
+        eprintln!("failed to assemble program with `as`:");
+        io::stderr().write_all(&as_out.stderr).unwrap();
+        exit(1);
+    }
 
     // Link
-    println!("linking");
+    eprintln!("linking");
     let cc = env::var("CC");
     let cc = cc.as_deref().unwrap_or("clang");
     let link_out = std::process::Command::new(cc)
@@ -204,11 +208,15 @@ fn pipeline(src: &str, args: &Args, tokens: &mut Vec<Token>, ident_interner: &mu
         .arg(out_file)
         .arg("target/_coolc/out.o")
         .output()
-        .expect("failed to link program");
-    assert!(
-        link_out.status.success(),
-        "failed to link program: non-exit status"
-    );
+        .unwrap_or_else(|error| {
+            eprintln!("failed to link program with `{cc}`: {error}");
+            exit(1);
+        });
+    if !link_out.status.success() {
+        eprintln!("failed to link program with `{cc}`:");
+        io::stderr().write_all(&link_out.stderr).unwrap();
+        exit(1);
+    }
 }
 
 fn report_error<T>(src: &str, error: &Spanned<T>, ident_interner: &Interner<str>)
