@@ -1,5 +1,6 @@
 [workspace]
-members = [".", "bench"]
+members = [".", "coolc-bin", "runtime", "bench"]
+default-members = [".", "coolc-bin"]
 resolver = "3"
 
 [workspace.package]
@@ -8,6 +9,8 @@ version = "0.0.1"
 
 [workspace.dependencies]
 cool.path = "."
+cfg-if = "1.0.0"
+clap = { version = "4.5.39", features = ["derive"] }
 criterion = "0.5.1"
 indoc = "2.0.6"
 phf = { version = "0.11.3", features = ["macros"] }

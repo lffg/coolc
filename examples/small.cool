@@ -1,5 +1,10 @@
 class Main {
     main() : Int {
-        1 + 2 * 3
+        let io : IO <- new IO in
+        let res : Int <- 1 + 2 * 3 in
+        let s : String <- io.string_of_int(res) in {
+            io.out_string(s);
+            0
+        }
     };
 };

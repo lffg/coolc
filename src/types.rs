@@ -107,7 +107,7 @@ impl Type {
     pub fn is_subtype_of(&self, other: &Self) -> bool {
         if self.name() == builtins::NO_TYPE {
             return true;
-        };
+        }
         let mut curr = self;
         loop {
             if curr == other {
@@ -222,8 +222,10 @@ pub mod builtins {
         class IO("IO", 6) inherits OBJECT {
             out_string(x: String) : SELF_TYPE;
             out_int(x: Int) : SELF_TYPE;
+
             in_string(): String;
             in_int(): Int;
+
             exit(status: Int) : "<no-type>";
         };
     }

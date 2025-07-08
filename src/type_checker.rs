@@ -26,10 +26,25 @@ pub struct Checker<'ident> {
     current_class: Interned<str>,
     errors: Vec<Spanned<Error>>,
     ident_interner: &'ident mut Interner<str>,
+    found_main: bool,
+}
+
+pub mod flags {
+    /// Sane behavior for common user workloads.
+    pub const DEFAULT: u32 = 0;
+
+    /// Disables entry point check. Useful for testing.
+    pub const SKIP_ENTRY_POINT_CHECK: u32 = 1 << 0;
 }
 
 impl Checker<'_> {
-    pub fn with_capacity(ident_interner: &mut Interner<str>, capacity: usize) -> Checker<'_> {
+    pub fn with_capacity(
+        ident_interner: &mut Interner<str>,
+        capacity: usize,
+        checker_flags: u32,
+    ) -> Checker<'_> {
+        let skip_entrypoint_check = (checker_flags & flags::SKIP_ENTRY_POINT_CHECK) == 1;
+
         Checker {
             registry: TypeRegistry::with_capacity(capacity),
             classes: HashMap::with_capacity(0),
@@ -37,6 +52,7 @@ impl Checker<'_> {
             current_class: builtins::NO_TYPE,
             errors: Vec::with_capacity(8),
             ident_interner,
+            found_main: skip_entrypoint_check,
         }
     }
 
@@ -55,6 +71,11 @@ impl Checker<'_> {
             .map(|class| self.check_class(class))
             .collect();
         let program = Program { classes };
+
+        if !self.found_main {
+            let error = Error::MissingEntryPoint;
+            self.errors.push(Span::new_of_length(0, 0).wrap(error));
+        }
 
         if self.errors.is_empty() {
             Ok((program, self.registry))
@@ -83,7 +104,7 @@ impl Checker<'_> {
             let attributes: Vec<_> = this.scoped_formals(current_class.clone(), &[], |this| {
                 attributes
                     .into_iter()
-                    .map(|binding| this.check_binding(binding))
+                    .map(|binding| this.check_attribute(binding))
                     .collect()
             });
 
@@ -104,14 +125,14 @@ impl Checker<'_> {
         })
     }
 
-    fn check_binding(&mut self, binding: ast::Binding<Untyped>) -> ast::Binding<Typed> {
+    fn check_attribute(&mut self, binding: ast::Attribute<Untyped>) -> ast::Attribute<Typed> {
         let ty = self.get_type_allowing_self_type(binding.ty);
         let initializer = binding.initializer.map(|expr| {
             let expr = self.check_expr(expr);
             self.assert_is_subtype(expr.ty(), &ty, expr.span);
             expr
         });
-        ast::Binding {
+        ast::Attribute {
             name: binding.name,
             ty,
             initializer,
@@ -136,6 +157,19 @@ impl Checker<'_> {
         });
         let return_ty = self.get_type_allowing_self_type(method.return_ty);
         self.assert_is_subtype(body.ty(), &return_ty, body.span);
+
+        let name = (self.current_class, method.name.name);
+        // Usually, checks such as `and !self.found_main` aren't necessary.
+        // However, the type checker's caller may define a flag to disable the
+        // main check. In this case, we set `found_main` as true in the
+        // constructor. Hence, this check is necessary to avoid running the
+        // return type in the check if the main was found *or* if it was
+        // bypassed by such a flag.
+        if name == (well_known::MAIN, well_known::MAIN_METHOD) && !self.found_main {
+            self.found_main = true;
+            self.assert_is_type(&return_ty, builtins::INT, return_ty.span());
+        }
+
         ast::Method {
             name: method.name,
             formals,
@@ -314,24 +348,29 @@ impl Checker<'_> {
                     ));
                 }
 
-                let binding = {
-                    assert_eq!(bindings.len(), 1);
-                    let binding = bindings.remove(0); // untyped
-                    let ty = self.get_type_allowing_self_type(binding.ty);
-                    ast::Binding {
-                        name: binding.name,
-                        initializer: binding.initializer.map(|i| {
-                            let expr = self.check_expr(i);
-                            self.assert_is_subtype(expr.ty(), &ty, expr.span);
-                            expr
-                        }),
-                        ty,
-                    }
-                };
-                let body = self.scoped_local(binding.name.name, binding.ty.clone(), |this| {
-                    this.check_expr(*body)
+                assert_eq!(bindings.len(), 1);
+                let binding = bindings.remove(0);
+
+                let binding_name = binding.name;
+                let binding_ty = self.get_type_allowing_self_type(binding.ty);
+                let binding_initializer = binding.initializer.map(|i| {
+                    let expr = self.check_expr(i);
+                    self.assert_is_subtype(expr.ty(), &binding_ty, expr.span);
+                    expr
                 });
-                let bindings = vec![binding];
+
+                let (symbol, body) =
+                    self.scoped_local(binding_name.name, binding_ty.clone(), |this| {
+                        this.check_expr(*body)
+                    });
+
+                let bindings = vec![ast::LetBinding {
+                    name: binding_name,
+                    ty: binding_ty,
+                    initializer: binding_initializer,
+                    info: symbol,
+                }];
+
                 let ty = body.ty().clone();
                 let body = Box::new(body);
                 (ExprKind::Let { bindings, body }, ty)
@@ -350,7 +389,7 @@ impl Checker<'_> {
                         }
                         seen.insert(ty.name());
 
-                        let body = self.scoped_local(arm.name.name, ty.clone(), |this| {
+                        let (symbol, body) = self.scoped_local(arm.name.name, ty.clone(), |this| {
                             this.check_expr(*arm.body)
                         });
 
@@ -360,6 +399,7 @@ impl Checker<'_> {
                             name: arm.name,
                             ty,
                             body: Box::new(body),
+                            info: symbol,
                         }
                     })
                     .collect();
@@ -804,6 +844,7 @@ impl Checker<'_> {
 
 #[derive(Copy, Clone, Debug)]
 pub enum Error {
+    MissingEntryPoint,
     DuplicateTypeDefinition {
         name: Interned<str>,
         other: Span,
@@ -985,14 +1026,20 @@ impl Checker<'_> {
         name: Interned<str>,
         ty: Type,
         f: impl FnOnce(&mut Self) -> T,
-    ) -> T {
+    ) -> (Symbol, T) {
         let id = LocalId(self.symbol_table.locals);
-        self.symbol_table.scopes.push(Scope::Local(name, ty, id));
+        self.symbol_table
+            .scopes
+            .push(Scope::Local(name, ty.clone(), id));
+        let symbol = Symbol {
+            ty,
+            binding: Binding::Local(id),
+        };
         self.symbol_table.locals += 1;
 
         let res = f(self);
         self.symbol_table.scopes.pop().expect("just pushed");
-        res
+        (symbol, res)
     }
 
     fn scoped_formals<T>(
@@ -1096,7 +1143,7 @@ mod tests {
 
     use crate::{
         parser::test_utils::parse_program,
-        type_checker::{Checker, ClassesEnv},
+        type_checker::{flags, Checker, ClassesEnv},
         util::{
             intern::Interner,
             test_utils::{assert_errors, tree_tests},
@@ -1905,7 +1952,7 @@ mod tests {
             class Block inherits Entity {};
             ",
         );
-        let mut checker = Checker::with_capacity(&mut i, 16);
+        let mut checker = Checker::with_capacity(&mut i, 16, flags::SKIP_ENTRY_POINT_CHECK);
         checker.build_type_registry(&prog);
         assert!(checker.errors.is_empty());
         assert_eq!(
@@ -1935,7 +1982,7 @@ mod tests {
             class Object {};
             ",
         );
-        let mut checker = Checker::with_capacity(&mut i, 16);
+        let mut checker = Checker::with_capacity(&mut i, 16, flags::SKIP_ENTRY_POINT_CHECK);
         checker.build_type_registry(&prog);
         assert_errors(
             checker.ident_interner,
@@ -1954,7 +2001,7 @@ mod tests {
             class Entity inherits UndefinedClass {};
             ",
         );
-        let mut checker = Checker::with_capacity(&mut i, 16);
+        let mut checker = Checker::with_capacity(&mut i, 16, flags::SKIP_ENTRY_POINT_CHECK);
         checker.build_type_registry(&prog);
         assert_errors(
             checker.ident_interner,
@@ -1978,7 +2025,7 @@ mod tests {
             };
             ",
         );
-        let mut checker = Checker::with_capacity(&mut i, 16);
+        let mut checker = Checker::with_capacity(&mut i, 16, flags::SKIP_ENTRY_POINT_CHECK);
         checker.build_type_registry(&prog);
         checker.build_classes_env(&prog);
         assert!(checker.errors.is_empty());
@@ -2037,7 +2084,7 @@ mod tests {
             };
             ",
         );
-        let mut checker = Checker::with_capacity(&mut i, 16);
+        let mut checker = Checker::with_capacity(&mut i, 16, flags::SKIP_ENTRY_POINT_CHECK);
         checker.build_type_registry(&prog);
         checker.build_classes_env(&prog);
         assert!(checker.errors.is_empty());

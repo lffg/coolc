@@ -1,7 +1,7 @@
 use crate::{
     ast, parser,
     token::Spanned,
-    type_checker::Checker,
+    type_checker::{self, Checker},
     util::{
         self,
         fmt::{tree, Show},
@@ -71,7 +71,8 @@ pub fn run_pipeline(test: Test) -> (String, Vec<String>) {
             };
             let mut fmt_errors = format_errors(interner, &errors);
 
-            let checker = Checker::with_capacity(interner, 128);
+            let flags = type_checker::flags::SKIP_ENTRY_POINT_CHECK;
+            let checker = Checker::with_capacity(interner, 128, flags);
             let (prog, errors) = match checker.check(prog) {
                 Ok((prog, _reg)) => (prog, vec![]),
                 Err((prog, _reg, errors)) => (prog, errors),
@@ -89,7 +90,8 @@ pub fn run_pipeline(test: Test) -> (String, Vec<String>) {
             let prog = ast::test_utils::from_expr_to_main_program(expr);
             let mut fmt_errors = format_errors(interner, &errors);
 
-            let checker = Checker::with_capacity(interner, 128);
+            let flags = type_checker::flags::SKIP_ENTRY_POINT_CHECK;
+            let checker = Checker::with_capacity(interner, 128, flags);
             let (prog, errors) = match checker.check(prog) {
                 Ok((prog, _reg)) => (prog, vec![]),
                 Err((prog, _reg, errors)) => (prog, errors),

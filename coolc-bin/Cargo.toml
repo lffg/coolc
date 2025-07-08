@@ -1,0 +1,15 @@
+[package]
+name = "coolc-bin"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+cool.workspace = true
+cfg-if.workspace = true
+clap.workspace = true
+
+[build-dependencies]
+cool.workspace = true
+
+[lints]
+workspace = true
