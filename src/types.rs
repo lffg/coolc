@@ -107,7 +107,7 @@ impl Type {
     pub fn is_subtype_of(&self, other: &Self) -> bool {
         if self.name() == builtins::NO_TYPE {
             return true;
-        };
+        }
         let mut curr = self;
         loop {
             if curr == other {

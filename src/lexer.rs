@@ -1,6 +1,6 @@
 use std::{iter::Peekable, num::ParseIntError};
 
-use crate::token::{Span, Token, TokenKind, KEYWORDS};
+use crate::token::{KEYWORDS, Span, Token, TokenKind};
 
 pub const SUGGESTED_TOKENS_CAPACITY: usize = 8_192;
 
@@ -183,6 +183,7 @@ impl Lexer<'_, '_> {
         TokenKind::InlineComment
     }
 
+    #[expect(clippy::needless_continue)]
     fn multiline_comment(&mut self) -> TokenKind {
         assert_eq!(self.advance(), '*');
         loop {

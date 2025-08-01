@@ -4,7 +4,7 @@ use crate::{
     type_checker::{self, Checker},
     util::{
         self,
-        fmt::{tree, Show},
+        fmt::{Show, tree},
         intern::Interner,
     },
 };

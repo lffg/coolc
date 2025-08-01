@@ -11,7 +11,7 @@ use cool::{
     type_checker,
     util::{
         self,
-        fmt::{tree::print_program, Show},
+        fmt::{Show, tree::print_program},
         intern::Interner,
     },
 };

@@ -8,7 +8,7 @@ use std::{
 use crate::{
     ast::{self, BinaryOperator, Expr, ExprKind, Program, TypeName, Typed, UnaryOperator, Untyped},
     token::{Span, Spanned},
-    types::{builtins, well_known, Type, TypeRegistry},
+    types::{Type, TypeRegistry, builtins, well_known},
     util::intern::{Interned, Interner},
 };
 
@@ -1133,7 +1133,7 @@ mod tests {
 
     use crate::{
         parser::test_utils::parse_program,
-        type_checker::{flags, Checker, ClassesEnv},
+        type_checker::{Checker, ClassesEnv, flags},
         util::{
             intern::Interner,
             test_utils::{assert_errors, tree_tests},

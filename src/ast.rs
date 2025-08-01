@@ -46,7 +46,7 @@ use std::fmt::Debug;
 use crate::{
     token::Span,
     type_checker::Symbol,
-    types::{builtins, Type},
+    types::{Type, builtins},
     util::intern::Interned,
 };
 

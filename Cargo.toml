@@ -3,7 +3,7 @@ members = [".", "bench"]
 resolver = "3"
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 version = "0.0.1"
 
 [workspace.dependencies]

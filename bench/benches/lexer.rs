@@ -1,8 +1,8 @@
 use cool::{
-    lexer::{lex, SUGGESTED_TOKENS_CAPACITY},
+    lexer::{SUGGESTED_TOKENS_CAPACITY, lex},
     token::{Token, TokenKind},
 };
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
 static INPUT: &str = include_str!("../../examples/big.cool");
